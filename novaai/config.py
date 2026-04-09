@@ -245,7 +245,7 @@ class Config:
             history_turns=int(os.getenv("HISTORY_TURNS", "10")),
             temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.95")),
             request_timeout=request_timeout,
-            voice_enabled=parse_bool_env("VOICE_ENABLED", True),
+            voice_enabled=parse_bool_env("VOICE_ENABLED", False),
             input_mode=normalize_input_mode(os.getenv("INPUT_MODE", "voice")),
             stt_provider=normalize_stt_provider(
                 os.getenv("STT_PROVIDER", "faster-whisper")

@@ -143,6 +143,7 @@ NovaAI/
 - `NOVA_GITHUB_BRANCH`: override the GitHub branch used for update checks
 - `OLLAMA_MODEL`: the Ollama chat model name
 - `OLLAMA_NUM_PREDICT`: reply token budget
+- `VOICE_ENABLED`: whether spoken replies start enabled (default is `false`)
 - `XTTS_STREAM_OUTPUT`: stream speech while audio is generating
 - `XTTS_CHUNK_MAX_CHARS`: safe per-chunk XTTS text limit
 - `XTTS_MAX_TEXT_CHARS`: maximum total spoken text for one reply
