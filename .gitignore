@@ -1,0 +1,8 @@
+.env
+.venv/
+.venv-xtts/
+__pycache__/
+audio/
+data/history.jsonl
+data/profile.json
+vendor/
