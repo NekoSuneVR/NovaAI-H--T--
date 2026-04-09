@@ -6,3 +6,4 @@ audio/
 data/history.jsonl
 data/profile.json
 vendor/
+data/
