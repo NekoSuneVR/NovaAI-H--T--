@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from .audio_input import (
     describe_selected_microphone,
@@ -17,10 +17,17 @@ from .config import Config
 from .models import SessionState
 from .storage import (
     append_history,
+    create_profile,
+    delete_profile,
     ensure_runtime_dirs,
+    get_active_profile_id,
+    list_profiles,
     load_profile,
+    load_profile_by_id,
     read_recent_history,
     reset_history,
+    save_profile_by_id,
+    set_active_profile,
 )
 from .tts import (
     describe_selected_speaker,
@@ -114,6 +121,7 @@ class NovaAIGui:
     def __init__(self, auto_listen_on_launch: bool = True):
         ensure_runtime_dirs()
         self.config = Config.from_env()
+        self.active_profile_id = get_active_profile_id()
         self.profile = load_profile()
         self.state = SessionState(
             voice_enabled=self.config.voice_enabled,
@@ -141,18 +149,31 @@ class NovaAIGui:
         self.message_body_labels: list[tuple[tk.Label, str]] = []
         self.mic_choice_map: dict[str, int | None] = {}
         self.speaker_choice_map: dict[str, int | None] = {}
+        self.tab_buttons: dict[str, tk.Button] = {}
+        self.tab_frames: dict[str, tk.Frame] = {}
+        self.current_tab = "main"
+        self.profile_choice_map: dict[str, str] = {}
+        self.profile_list_ids: list[str] = []
+        self.profile_editor_loaded_id: str | None = None
 
         self.status_text = tk.StringVar(value="Press Start Session to begin.")
         self.status_badge_text = tk.StringVar(value="Standby")
         self.hero_subtitle_text = tk.StringVar()
         self.mic_select_text = tk.StringVar(value="System default microphone")
         self.speaker_select_text = tk.StringVar(value="System default speaker")
+        self.profile_choice_text = tk.StringVar(value="")
+        self.profile_name_text = tk.StringVar(value="")
+        self.profile_description_text = tk.StringVar(value="")
+        self.profile_companion_name_text = tk.StringVar(value="")
+        self.profile_user_name_text = tk.StringVar(value="")
+        self.profile_tags_text = tk.StringVar(value="")
         self.model_badge_text = tk.StringVar()
         self.mode_badge_text = tk.StringVar()
         self.voice_badge_text = tk.StringVar()
         self.mic_badge_text = tk.StringVar()
 
         self._build_ui()
+        self._refresh_profiles_panel(select_profile_id=self.active_profile_id)
         self._refresh_audio_device_choices(silent=True)
         self._load_recent_history()
         self._refresh_summary_labels()
@@ -195,6 +216,7 @@ class NovaAIGui:
         user_name = self.profile.get("user_name", "You")
         print()
         print(f"[NovaAI GUI] Companion: {companion_name} | User: {user_name}")
+        print(f"[NovaAI GUI] Active profile id: {self.active_profile_id}")
         print(
             f"[NovaAI GUI] Model: {self.config.model} | "
             f"Profile: {self.config.performance_profile} | "
@@ -210,7 +232,7 @@ class NovaAIGui:
         )
         print()
 
-    def _build_ui(self) -> None:
+    def _build_ui_legacy(self) -> None:
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
 
@@ -690,6 +712,593 @@ class NovaAIGui:
             columnspan=2,
         )
 
+    def _build_chat_tab(self, parent: tk.Widget) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        conversation_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        conversation_card.grid(row=0, column=0, sticky="nsew")
+        conversation_card.grid_columnconfigure(0, weight=1)
+        conversation_card.grid_rowconfigure(1, weight=1)
+
+        transcript_header = tk.Frame(conversation_card, bg=PALETTE["card"])
+        transcript_header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        transcript_header.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            transcript_header,
+            text="Conversation",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 18),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            transcript_header,
+            text="Live transcript for voice turns, quick banter, and longer explanations when needed.",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 10),
+            justify="left",
+            anchor="w",
+            wraplength=940,
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        transcript_shell = tk.Frame(
+            conversation_card,
+            bg=PALETTE["canvas"],
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["border"],
+        )
+        transcript_shell.grid(row=1, column=0, sticky="nsew")
+        transcript_shell.grid_columnconfigure(0, weight=1)
+        transcript_shell.grid_rowconfigure(0, weight=1)
+
+        self.transcript_canvas = tk.Canvas(
+            transcript_shell,
+            bg=PALETTE["canvas"],
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+        )
+        self.transcript_canvas.grid(row=0, column=0, sticky="nsew")
+
+        transcript_scroll = tk.Scrollbar(
+            transcript_shell,
+            orient="vertical",
+            command=self.transcript_canvas.yview,
+        )
+        transcript_scroll.grid(row=0, column=1, sticky="ns")
+        self.transcript_canvas.configure(yscrollcommand=transcript_scroll.set)
+
+        self.message_column = tk.Frame(
+            self.transcript_canvas,
+            bg=PALETTE["canvas"],
+            padx=18,
+            pady=18,
+        )
+        self.message_window = self.transcript_canvas.create_window(
+            (0, 0),
+            window=self.message_column,
+            anchor="nw",
+        )
+
+        self.message_column.bind(
+            "<Configure>",
+            lambda _event: self._update_transcript_scrollregion(),
+        )
+        self.transcript_canvas.bind("<Configure>", self._on_transcript_resize)
+        self.transcript_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.message_column.bind("<MouseWheel>", self._on_mousewheel)
+
+        composer = tk.Frame(
+            conversation_card,
+            bg=PALETTE["card_alt"],
+            padx=18,
+            pady=16,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["border_soft"],
+        )
+        composer.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        composer.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            composer,
+            text="Send a message or slash command.",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 10),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        self.message_entry = tk.Entry(
+            composer,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Segoe UI", 12),
+        )
+        self.message_entry.grid(row=1, column=0, sticky="ew", ipady=12)
+        self.message_entry.bind("<Return>", self._on_send_pressed)
+
+        self.send_button = tk.Button(
+            composer,
+            text="Transmit",
+            command=self.send_text_message,
+            bg=PALETTE["accent"],
+            fg=PALETTE["accent_text"],
+            activebackground="#8be0ff",
+            activeforeground=PALETTE["accent_text"],
+            relief="flat",
+            bd=0,
+            padx=18,
+            pady=12,
+            font=("Bahnschrift SemiBold", 11),
+            cursor="hand2",
+        )
+        self.send_button.grid(row=1, column=1, padx=(12, 0))
+
+    def _build_profile_field(
+        self,
+        parent: tk.Widget,
+        label: str,
+        variable: tk.StringVar,
+        row: int,
+    ) -> None:
+        tk.Label(
+            parent,
+            text=label,
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=row, column=0, sticky="w", pady=(0 if row == 0 else 8, 4), padx=(0, 10))
+        entry = tk.Entry(
+            parent,
+            textvariable=variable,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Segoe UI", 10),
+        )
+        entry.grid(row=row, column=1, sticky="ew", pady=(0 if row == 0 else 8, 4))
+
+    def _build_profiles_tab(self, parent: tk.Widget) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=3)
+        parent.grid_rowconfigure(0, weight=1)
+
+        list_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        list_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        list_card.grid_columnconfigure(0, weight=1)
+        list_card.grid_rowconfigure(1, weight=1)
+
+        tk.Label(
+            list_card,
+            text="Profiles",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 16),
+        ).grid(row=0, column=0, sticky="w")
+
+        self.profiles_listbox = tk.Listbox(
+            list_card,
+            bg=PALETTE["canvas"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["accent_deep"],
+            selectforeground=PALETTE["accent"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            activestyle="none",
+            font=("Segoe UI", 10),
+        )
+        self.profiles_listbox.grid(row=1, column=0, sticky="nsew", pady=(10, 8))
+        self.profiles_listbox.bind("<<ListboxSelect>>", self._on_profile_selected)
+
+        list_actions = tk.Frame(list_card, bg=PALETTE["card"])
+        list_actions.grid(row=2, column=0, sticky="ew")
+        list_actions.grid_columnconfigure(0, weight=1)
+        list_actions.grid_columnconfigure(1, weight=1)
+
+        tk.Button(
+            list_actions,
+            text="Create",
+            command=self.create_profile_from_gui,
+            bg=PALETTE["accent_deep"],
+            fg=PALETTE["accent"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=8,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        tk.Button(
+            list_actions,
+            text="Clone",
+            command=self.clone_profile_from_gui,
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["text"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=8,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        tk.Button(
+            list_actions,
+            text="Use Profile",
+            command=self.activate_selected_profile,
+            bg=PALETTE["success_deep"],
+            fg=PALETTE["success"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=8,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=(8, 0))
+        tk.Button(
+            list_actions,
+            text="Delete",
+            command=self.delete_selected_profile,
+            bg=PALETTE["danger_deep"],
+            fg=PALETTE["danger"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=8,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        ).grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=(8, 0))
+
+        editor_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        editor_card.grid(row=0, column=1, sticky="nsew")
+        editor_card.grid_columnconfigure(0, weight=1)
+        editor_card.grid_rowconfigure(6, weight=1)
+        editor_card.grid_rowconfigure(8, weight=2)
+
+        tk.Label(
+            editor_card,
+            text="Profile Editor",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 16),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            editor_card,
+            text="Edit basics quickly or use the advanced JSON editor for full customization.",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+            justify="left",
+            wraplength=760,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 10))
+
+        basic_form = tk.Frame(editor_card, bg=PALETTE["card"])
+        basic_form.grid(row=2, column=0, sticky="ew")
+        basic_form.grid_columnconfigure(1, weight=1)
+
+        self._build_profile_field(basic_form, "Profile Name", self.profile_name_text, row=0)
+        self._build_profile_field(
+            basic_form,
+            "Description",
+            self.profile_description_text,
+            row=1,
+        )
+        self._build_profile_field(
+            basic_form,
+            "Companion Name",
+            self.profile_companion_name_text,
+            row=2,
+        )
+        self._build_profile_field(
+            basic_form,
+            "User Name",
+            self.profile_user_name_text,
+            row=3,
+        )
+        self._build_profile_field(
+            basic_form,
+            "Tags (comma separated)",
+            self.profile_tags_text,
+            row=4,
+        )
+
+        tk.Label(
+            editor_card,
+            text="Companion Style",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=3, column=0, sticky="w", pady=(12, 4))
+        self.profile_style_textbox = tk.Text(
+            editor_card,
+            height=4,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Segoe UI", 10),
+            wrap="word",
+        )
+        self.profile_style_textbox.grid(row=4, column=0, sticky="ew")
+
+        goals_memory_frame = tk.Frame(editor_card, bg=PALETTE["card"])
+        goals_memory_frame.grid(row=5, column=0, sticky="nsew", pady=(12, 0))
+        goals_memory_frame.grid_columnconfigure(0, weight=1)
+        goals_memory_frame.grid_columnconfigure(1, weight=1)
+
+        goals_card = tk.Frame(goals_memory_frame, bg=PALETTE["card_alt"], padx=10, pady=10)
+        goals_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        goals_card.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            goals_card,
+            text="Shared Goals (one per line)",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, sticky="w")
+        self.profile_goals_textbox = tk.Text(
+            goals_card,
+            height=7,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Segoe UI", 10),
+            wrap="word",
+        )
+        self.profile_goals_textbox.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+
+        memory_card = tk.Frame(goals_memory_frame, bg=PALETTE["card_alt"], padx=10, pady=10)
+        memory_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        memory_card.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            memory_card,
+            text="Memory Notes (one per line)",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, sticky="w")
+        self.profile_memory_textbox = tk.Text(
+            memory_card,
+            height=7,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Segoe UI", 10),
+            wrap="word",
+        )
+        self.profile_memory_textbox.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+
+        action_row = tk.Frame(editor_card, bg=PALETTE["card"])
+        action_row.grid(row=7, column=0, sticky="ew", pady=(12, 8))
+        action_row.grid_columnconfigure(0, weight=1)
+        action_row.grid_columnconfigure(1, weight=1)
+        action_row.grid_columnconfigure(2, weight=1)
+
+        tk.Button(
+            action_row,
+            text="Save Basic Fields",
+            command=self.save_profile_basic_from_gui,
+            bg=PALETTE["accent_deep"],
+            fg=PALETTE["accent"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=10,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        tk.Button(
+            action_row,
+            text="Reload Selected",
+            command=self.reload_selected_profile_editor,
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["text"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=10,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        ).grid(row=0, column=1, sticky="ew", padx=4)
+        tk.Button(
+            action_row,
+            text="Apply Advanced JSON",
+            command=self.apply_profile_json_from_gui,
+            bg=PALETTE["warning_deep"],
+            fg=PALETTE["warning"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=10,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
+
+        tk.Label(
+            editor_card,
+            text="Advanced JSON (full profile object)",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=8, column=0, sticky="w", pady=(2, 4))
+        self.profile_json_textbox = tk.Text(
+            editor_card,
+            bg=PALETTE["input"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["accent"],
+            font=("Consolas", 10),
+            wrap="none",
+        )
+        self.profile_json_textbox.grid(row=9, column=0, sticky="nsew")
+
+    def _build_settings_tab(self, parent: tk.Widget) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        selector_style = ttk.Style(self.root)
+        try:
+            selector_style.theme_use("clam")
+        except tk.TclError:
+            pass
+        selector_style.configure(
+            "NovaAI.TCombobox",
+            fieldbackground=PALETTE["input"],
+            background=PALETTE["input"],
+            foreground=PALETTE["text"],
+            bordercolor=PALETTE["border_soft"],
+            lightcolor=PALETTE["border_soft"],
+            darkcolor=PALETTE["border_soft"],
+            arrowcolor=PALETTE["accent"],
+            insertcolor=PALETTE["text"],
+        )
+
+        settings_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        settings_card.grid(row=0, column=0, sticky="nsew")
+        settings_card.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            settings_card,
+            text="Settings",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 18),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            settings_card,
+            text="Audio routing, device selection, and runtime preferences.",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 10),
+        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+
+        device_card = tk.Frame(
+            settings_card,
+            bg=PALETTE["card_alt"],
+            padx=14,
+            pady=14,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["border_soft"],
+        )
+        device_card.grid(row=2, column=0, sticky="ew")
+        device_card.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            device_card,
+            text="Audio Devices",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 12),
+        ).grid(row=0, column=0, sticky="w")
+        self.refresh_devices_button = tk.Button(
+            device_card,
+            text="Refresh",
+            command=self.refresh_audio_devices,
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            activebackground=PALETTE["input"],
+            activeforeground=PALETTE["text"],
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=6,
+            font=("Segoe UI Semibold", 9),
+            cursor="hand2",
+        )
+        self.refresh_devices_button.grid(row=0, column=1, sticky="e")
+
+        tk.Label(
+            device_card,
+            text="Microphone",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.mic_selector = ttk.Combobox(
+            device_card,
+            textvariable=self.mic_select_text,
+            state="readonly",
+            style="NovaAI.TCombobox",
+            font=("Segoe UI", 10),
+        )
+        self.mic_selector.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.mic_selector.bind("<<ComboboxSelected>>", self._on_mic_selected)
+
+        tk.Label(
+            device_card,
+            text="Speaker",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        self.speaker_selector = ttk.Combobox(
+            device_card,
+            textvariable=self.speaker_select_text,
+            state="readonly",
+            style="NovaAI.TCombobox",
+            font=("Segoe UI", 10),
+        )
+        self.speaker_selector.grid(row=4, column=0, columnspan=2, sticky="ew")
+        self.speaker_selector.bind("<<ComboboxSelected>>", self._on_speaker_selected)
+
+        notes_card = tk.Frame(
+            settings_card,
+            bg=PALETTE["card_alt"],
+            padx=14,
+            pady=14,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border_soft"],
+            highlightcolor=PALETTE["border_soft"],
+        )
+        notes_card.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        tk.Label(
+            notes_card,
+            text="Notes",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 11),
+        ).pack(anchor="w")
+        tk.Label(
+            notes_card,
+            text="Use Main tab for live control actions. Use Profiles tab for personality and deep JSON customization.",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+            justify="left",
+            anchor="w",
+            wraplength=860,
+        ).pack(anchor="w", pady=(6, 0))
+
     def _make_shell_card(self, parent: tk.Widget, bg: str) -> tk.Frame:
         return tk.Frame(
             parent,
@@ -715,6 +1324,537 @@ class NovaAIGui:
             pady=6,
             font=("Bahnschrift SemiBold", 10),
         )
+
+    def _build_ui(self) -> None:
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+
+        shell = tk.Frame(self.root, bg=PALETTE["bg"], padx=18, pady=18)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.grid_columnconfigure(1, weight=1)
+        shell.grid_rowconfigure(0, weight=1)
+
+        nav = tk.Frame(
+            shell,
+            bg=PALETTE["card"],
+            padx=12,
+            pady=12,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["border"],
+        )
+        nav.grid(row=0, column=0, sticky="ns", padx=(0, 14))
+        nav.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            nav,
+            text="NovaAI",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 18),
+        ).grid(row=0, column=0, sticky="w", pady=(4, 0))
+        tk.Label(
+            nav,
+            text="Workspace",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 9),
+        ).grid(row=1, column=0, sticky="w", pady=(0, 14))
+
+        self._create_tab_button(nav, "main", "Main", row=2)
+        self._create_tab_button(nav, "chat", "Chat", row=3)
+        self._create_tab_button(nav, "profiles", "Profiles", row=4)
+        self._create_tab_button(nav, "settings", "Settings", row=5)
+
+        content = tk.Frame(shell, bg=PALETTE["bg"])
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(0, weight=1)
+
+        for tab_key in ("main", "chat", "profiles", "settings"):
+            frame = tk.Frame(content, bg=PALETTE["bg"])
+            frame.grid(row=0, column=0, sticky="nsew")
+            self.tab_frames[tab_key] = frame
+
+        self._build_main_tab(self.tab_frames["main"])
+        self._build_chat_tab(self.tab_frames["chat"])
+        self._build_profiles_tab(self.tab_frames["profiles"])
+        self._build_settings_tab(self.tab_frames["settings"])
+        self._switch_tab("main")
+
+    def _create_tab_button(self, parent: tk.Widget, key: str, label: str, row: int) -> None:
+        button = tk.Button(
+            parent,
+            text=label,
+            command=lambda: self._switch_tab(key),
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted"],
+            activebackground=PALETTE["accent_deep"],
+            activeforeground=PALETTE["accent"],
+            relief="flat",
+            bd=0,
+            anchor="w",
+            padx=12,
+            pady=10,
+            font=("Bahnschrift SemiBold", 11),
+            cursor="hand2",
+        )
+        button.grid(row=row, column=0, sticky="ew", pady=3)
+        self.tab_buttons[key] = button
+
+    def _switch_tab(self, tab_key: str) -> None:
+        if tab_key not in self.tab_frames:
+            return
+
+        self.current_tab = tab_key
+        for key, frame in self.tab_frames.items():
+            if key == tab_key:
+                frame.tkraise()
+            else:
+                frame.lower()
+
+        for key, button in self.tab_buttons.items():
+            selected = key == tab_key
+            button.configure(
+                bg=PALETTE["accent_deep"] if selected else PALETTE["card_alt"],
+                fg=PALETTE["accent"] if selected else PALETTE["muted"],
+            )
+
+    def _build_main_tab(self, parent: tk.Widget) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(1, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
+
+        hero_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        hero_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 12))
+        hero_card.grid_columnconfigure(0, weight=1)
+
+        tk.Frame(hero_card, bg=PALETTE["accent"], height=3).grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            pady=(0, 14),
+        )
+        tk.Label(
+            hero_card,
+            text="MAIN CONTROL",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted_soft"],
+            font=("Bahnschrift SemiBold", 10),
+        ).grid(row=1, column=0, sticky="w")
+        tk.Label(
+            hero_card,
+            text=f"{self.profile['companion_name']} Studio",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 27),
+        ).grid(row=2, column=0, sticky="w", pady=(8, 5))
+        tk.Label(
+            hero_card,
+            textvariable=self.hero_subtitle_text,
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 10),
+            justify="left",
+            anchor="w",
+            wraplength=620,
+        ).grid(row=3, column=0, sticky="w")
+
+        badge_row = tk.Frame(hero_card, bg=PALETTE["card"])
+        badge_row.grid(row=4, column=0, sticky="w", pady=(14, 2))
+        self.model_badge_label = self._make_badge(badge_row, textvariable=self.model_badge_text)
+        self.model_badge_label.pack(side="left", padx=(0, 8))
+        self.mode_badge_label = self._make_badge(badge_row, textvariable=self.mode_badge_text)
+        self.mode_badge_label.pack(side="left", padx=(0, 8))
+        self.voice_badge_label = self._make_badge(badge_row, textvariable=self.voice_badge_text)
+        self.voice_badge_label.pack(side="left", padx=(0, 8))
+        self.mic_badge_label = self._make_badge(badge_row, textvariable=self.mic_badge_text)
+        self.mic_badge_label.pack(side="left")
+
+        pulse_card = self._make_shell_card(parent, bg=PALETTE["card_alt"])
+        pulse_card.grid(row=0, column=1, sticky="nsew", pady=(0, 12))
+        tk.Frame(pulse_card, bg=PALETTE["success"], height=3).pack(fill="x", pady=(0, 14))
+        tk.Label(
+            pulse_card,
+            text="SESSION PULSE",
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["muted_soft"],
+            font=("Bahnschrift SemiBold", 10),
+        ).pack(anchor="w")
+        self.status_badge_label = self._make_badge(pulse_card, textvariable=self.status_badge_text)
+        self.status_badge_label.pack(anchor="w", pady=(10, 10))
+        tk.Label(
+            pulse_card,
+            textvariable=self.status_text,
+            bg=PALETTE["card_alt"],
+            fg=PALETTE["text"],
+            font=("Segoe UI Semibold", 11),
+            justify="left",
+            anchor="w",
+            wraplength=260,
+        ).pack(anchor="w", fill="x")
+
+        controls_card = self._make_shell_card(parent, bg=PALETTE["card"])
+        controls_card.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        controls_card.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            controls_card,
+            text="Quick Actions",
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            font=("Bahnschrift SemiBold", 16),
+        ).pack(anchor="w")
+        tk.Label(
+            controls_card,
+            text="Start the session, control voice behavior, and keep the flow moving.",
+            bg=PALETTE["card"],
+            fg=PALETTE["muted"],
+            font=("Segoe UI", 10),
+            wraplength=840,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 12))
+
+        action_grid = tk.Frame(controls_card, bg=PALETTE["card"])
+        action_grid.pack(fill="x")
+        action_grid.grid_columnconfigure(0, weight=1)
+        action_grid.grid_columnconfigure(1, weight=1)
+
+        self._make_control_tile(
+            action_grid,
+            key="start",
+            title="Start Session",
+            subtitle="Enable chat and live controls.",
+            command=self.start_session,
+            tone="accent",
+            row=0,
+            column=0,
+            columnspan=2,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="listen",
+            title="Listen Now",
+            subtitle="Capture one spoken turn right away.",
+            command=self.start_listen_once,
+            tone="accent",
+            row=1,
+            column=0,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="hands_free",
+            title="Hands-free Off",
+            subtitle="Manual listens only.",
+            command=self.toggle_hands_free,
+            tone="neutral",
+            row=1,
+            column=1,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="mic",
+            title="Mic Live",
+            subtitle="NovaAI can start new captures.",
+            command=self.toggle_mic_muted,
+            tone="success",
+            row=2,
+            column=0,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="voice",
+            title="Voice Replies On",
+            subtitle="Spoken output is active.",
+            command=self.toggle_voice_output,
+            tone="accent",
+            row=2,
+            column=1,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="recalibrate",
+            title="Recalibrate",
+            subtitle="Relearn room noise.",
+            command=self.start_recalibration,
+            tone="warning",
+            row=3,
+            column=0,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="clear_history",
+            title="Clear History",
+            subtitle="Wipe the saved transcript.",
+            command=self.clear_history,
+            tone="danger",
+            row=3,
+            column=1,
+        )
+        self._make_control_tile(
+            action_grid,
+            key="performance",
+            title="Diagnostics",
+            subtitle="Print runtime details to console.",
+            command=self.show_performance,
+            tone="neutral",
+            row=4,
+            column=0,
+            columnspan=2,
+        )
+
+    def _selected_profile_id(self) -> str | None:
+        selected_indices = self.profiles_listbox.curselection()
+        if not selected_indices:
+            return None
+        index = selected_indices[0]
+        if index < 0 or index >= len(self.profile_list_ids):
+            return None
+        return self.profile_list_ids[index]
+
+    def _set_textbox_value(self, textbox: tk.Text, value: str) -> None:
+        textbox.delete("1.0", "end")
+        textbox.insert("1.0", value)
+
+    def _textbox_lines(self, textbox: tk.Text) -> list[str]:
+        raw = textbox.get("1.0", "end").strip()
+        if not raw:
+            return []
+        return [line.strip() for line in raw.splitlines() if line.strip()]
+
+    def _on_profile_selected(self, _event: object) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            return
+        try:
+            selected_profile = load_profile_by_id(selected_profile_id)
+        except RuntimeError as exc:
+            self._set_status_text(str(exc))
+            return
+        self._load_profile_into_editor(selected_profile_id, selected_profile)
+
+    def _refresh_profiles_panel(self, select_profile_id: str | None = None) -> None:
+        profile_summaries = list_profiles()
+        self.profile_list_ids = [summary["profile_id"] for summary in profile_summaries]
+        self.profiles_listbox.delete(0, "end")
+
+        for summary in profile_summaries:
+            active_tag = " (active)" if summary["is_active"] else ""
+            label = f"{summary['profile_name']} [{summary['companion_name']}]{active_tag}"
+            self.profiles_listbox.insert("end", label)
+
+        target_id = select_profile_id or self.active_profile_id
+        if target_id in self.profile_list_ids:
+            target_index = self.profile_list_ids.index(target_id)
+            self.profiles_listbox.selection_clear(0, "end")
+            self.profiles_listbox.selection_set(target_index)
+            self.profiles_listbox.activate(target_index)
+            self.profiles_listbox.see(target_index)
+            selected_profile = load_profile_by_id(target_id)
+            self._load_profile_into_editor(target_id, selected_profile)
+        elif self.profile_list_ids:
+            self.profiles_listbox.selection_clear(0, "end")
+            self.profiles_listbox.selection_set(0)
+            selected_profile_id = self.profile_list_ids[0]
+            selected_profile = load_profile_by_id(selected_profile_id)
+            self._load_profile_into_editor(selected_profile_id, selected_profile)
+
+    def _load_profile_into_editor(
+        self,
+        profile_id: str,
+        profile: dict[str, object],
+    ) -> None:
+        self.profile_editor_loaded_id = profile_id
+        self.profile_name_text.set(str(profile.get("profile_name", "")))
+        self.profile_description_text.set(str(profile.get("description", "")))
+        self.profile_companion_name_text.set(str(profile.get("companion_name", "")))
+        self.profile_user_name_text.set(str(profile.get("user_name", "")))
+        tags = profile.get("tags")
+        tag_text = ", ".join(str(tag).strip() for tag in (tags or []) if str(tag).strip())
+        self.profile_tags_text.set(tag_text)
+        self._set_textbox_value(
+            self.profile_style_textbox,
+            str(profile.get("companion_style", "")).strip(),
+        )
+        shared_goals = profile.get("shared_goals") if isinstance(profile.get("shared_goals"), list) else []
+        self._set_textbox_value(
+            self.profile_goals_textbox,
+            "\n".join(str(goal).strip() for goal in shared_goals if str(goal).strip()),
+        )
+        memory_notes = profile.get("memory_notes") if isinstance(profile.get("memory_notes"), list) else []
+        self._set_textbox_value(
+            self.profile_memory_textbox,
+            "\n".join(str(note).strip() for note in memory_notes if str(note).strip()),
+        )
+        self._set_textbox_value(
+            self.profile_json_textbox,
+            json.dumps(profile, indent=2, ensure_ascii=False),
+        )
+
+    def _build_basic_profile_update(self, base_profile: dict[str, object]) -> dict[str, object]:
+        updated_profile = dict(base_profile)
+        updated_profile["profile_name"] = self.profile_name_text.get().strip() or str(
+            base_profile.get("profile_name", "Untitled Profile")
+        )
+        updated_profile["description"] = self.profile_description_text.get().strip()
+        updated_profile["companion_name"] = self.profile_companion_name_text.get().strip() or str(
+            base_profile.get("companion_name", "NovaAI")
+        )
+        updated_profile["user_name"] = self.profile_user_name_text.get().strip() or str(
+            base_profile.get("user_name", "Friend")
+        )
+        updated_profile["companion_style"] = self.profile_style_textbox.get("1.0", "end").strip()
+        updated_profile["shared_goals"] = self._textbox_lines(self.profile_goals_textbox)
+        updated_profile["memory_notes"] = self._textbox_lines(self.profile_memory_textbox)
+        updated_profile["tags"] = [
+            piece.strip()
+            for piece in self.profile_tags_text.get().split(",")
+            if piece.strip()
+        ]
+        return updated_profile
+
+    def _sync_active_profile_from_storage(self) -> None:
+        self.active_profile_id = get_active_profile_id()
+        self.profile = load_profile()
+        self._refresh_summary_labels()
+        self._refresh_controls()
+
+    def create_profile_from_gui(self) -> None:
+        entered_name = simpledialog.askstring(
+            "Create profile",
+            "Profile name:",
+            parent=self.root,
+        )
+        if entered_name is None:
+            return
+        profile_name = entered_name.strip()
+        if not profile_name:
+            self._set_status_text("Profile creation cancelled: name is required.")
+            return
+        new_profile = create_profile(profile_name)
+        new_profile_id = str(new_profile.get("profile_id", ""))
+        self._refresh_profiles_panel(select_profile_id=new_profile_id)
+        self._set_status_text(f"Created profile '{profile_name}'.")
+
+    def clone_profile_from_gui(self) -> None:
+        source_profile_id = self._selected_profile_id()
+        if not source_profile_id:
+            self._set_status_text("Select a profile to clone first.")
+            return
+
+        clone_name = simpledialog.askstring(
+            "Clone profile",
+            "Name for the cloned profile:",
+            parent=self.root,
+        )
+        if clone_name is None:
+            return
+        clone_name = clone_name.strip()
+        if not clone_name:
+            self._set_status_text("Clone cancelled: name is required.")
+            return
+
+        source_profile = load_profile_by_id(source_profile_id)
+        cloned_profile = create_profile(clone_name, base_profile=source_profile)
+        cloned_profile_id = str(cloned_profile.get("profile_id", ""))
+        self._refresh_profiles_panel(select_profile_id=cloned_profile_id)
+        self._set_status_text(f"Cloned profile as '{clone_name}'.")
+
+    def activate_selected_profile(self) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            self._set_status_text("Select a profile to activate.")
+            return
+
+        active_profile = set_active_profile(selected_profile_id)
+        self.active_profile_id = selected_profile_id
+        self.profile = active_profile
+        self._refresh_profiles_panel(select_profile_id=selected_profile_id)
+        self._refresh_summary_labels()
+        self._refresh_controls()
+        self._append_system_message(
+            f"Active profile switched to {self.profile.get('profile_name', 'profile')}."
+        )
+        self._set_status_text("Profile activated.")
+
+    def delete_selected_profile(self) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            self._set_status_text("Select a profile to delete.")
+            return
+
+        confirm_text = (
+            "Delete this profile? If it is active, NovaAI will switch to another profile."
+        )
+        confirmed = messagebox.askyesno(
+            "Delete profile",
+            confirm_text,
+            parent=self.root,
+        )
+        if not confirmed:
+            return
+
+        new_active_id = delete_profile(selected_profile_id)
+        self._sync_active_profile_from_storage()
+        self._refresh_profiles_panel(select_profile_id=new_active_id)
+        self._set_status_text("Profile deleted.")
+
+    def save_profile_basic_from_gui(self) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            self._set_status_text("Select a profile to save first.")
+            return
+
+        existing_profile = load_profile_by_id(selected_profile_id)
+        updated_profile = self._build_basic_profile_update(existing_profile)
+        saved_profile = save_profile_by_id(selected_profile_id, updated_profile)
+
+        if selected_profile_id == self.active_profile_id:
+            self.profile = saved_profile
+            self._refresh_summary_labels()
+            self._refresh_controls()
+
+        self._refresh_profiles_panel(select_profile_id=selected_profile_id)
+        self._set_status_text("Basic profile fields saved.")
+
+    def reload_selected_profile_editor(self) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            self._set_status_text("Select a profile to reload.")
+            return
+        selected_profile = load_profile_by_id(selected_profile_id)
+        self._load_profile_into_editor(selected_profile_id, selected_profile)
+        self._set_status_text("Profile editor reloaded.")
+
+    def apply_profile_json_from_gui(self) -> None:
+        selected_profile_id = self._selected_profile_id()
+        if not selected_profile_id:
+            self._set_status_text("Select a profile before applying JSON.")
+            return
+
+        raw_json = self.profile_json_textbox.get("1.0", "end").strip()
+        if not raw_json:
+            self._set_status_text("Advanced JSON cannot be empty.")
+            return
+
+        try:
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            self._set_status_text(f"Invalid JSON: {exc}")
+            return
+
+        if not isinstance(parsed, dict):
+            self._set_status_text("Profile JSON must be an object.")
+            return
+
+        parsed["profile_id"] = selected_profile_id
+        saved_profile = save_profile_by_id(selected_profile_id, parsed)
+        if selected_profile_id == self.active_profile_id:
+            self.profile = saved_profile
+            self._refresh_summary_labels()
+            self._refresh_controls()
+        self._refresh_profiles_panel(select_profile_id=selected_profile_id)
+        self._set_status_text("Advanced JSON applied.")
 
     def refresh_audio_devices(self) -> None:
         self._refresh_audio_device_choices(silent=False)
@@ -1019,8 +2159,9 @@ class NovaAIGui:
 
     def _refresh_summary_labels(self) -> None:
         companion_name = self.profile.get("companion_name", "NovaAI")
+        profile_name = self.profile.get("profile_name", "Active Profile")
         self.hero_subtitle_text.set(
-            "A focused control deck for chat and voice. Advanced diagnostics are printed in console."
+            f"Active profile: {profile_name}. Use the Profiles tab for deep JSON customization."
         )
 
         self.model_badge_text.set("NovaAI")
@@ -1366,9 +2507,40 @@ class NovaAIGui:
             )
             return
 
+        if lowered == "/profiles":
+            summaries = list_profiles()
+            lines = ["Profiles:"]
+            for summary in summaries:
+                active_tag = " (active)" if summary["is_active"] else ""
+                lines.append(
+                    f"- {summary['profile_id']}: {summary['profile_name']}{active_tag}"
+                )
+            self._append_system_message("\n".join(lines))
+            return
+
+        if lowered.startswith("/profile use "):
+            target_profile_id = command.strip()[13:].strip()
+            if not target_profile_id:
+                self._append_system_message("Use /profile use <profile_id>.")
+                return
+            try:
+                active_profile = set_active_profile(target_profile_id)
+            except RuntimeError as exc:
+                self._append_system_message(str(exc))
+                return
+            self.active_profile_id = target_profile_id
+            self.profile = active_profile
+            self._refresh_profiles_panel(select_profile_id=target_profile_id)
+            self._refresh_summary_labels()
+            self._refresh_controls()
+            self._append_system_message(
+                f"Active profile switched to {self.profile.get('profile_name', target_profile_id)}."
+            )
+            return
+
         if lowered == "/help":
             self._append_system_message(
-                "GUI commands: /listen, /performance, /reset, /voice, /mode voice, /mode text, /recalibrate, /profile."
+                "GUI commands: /listen, /performance, /reset, /voice, /mode voice, /mode text, /recalibrate, /profile, /profiles, /profile use <id>."
             )
             return
 
@@ -1536,6 +2708,7 @@ class NovaAIGui:
 
     def show_performance(self) -> None:
         lines = [
+            f"Active profile: {self.profile.get('profile_name', self.active_profile_id)} ({self.active_profile_id})",
             f"Performance profile: {self.config.performance_profile}",
             f"Auto-tune: {'on' if self.config.auto_tune_performance else 'off'} ({self.config.auto_tune_goal})",
             f"Hardware: {self.config.system_summary}",

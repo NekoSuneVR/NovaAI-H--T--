@@ -8,52 +8,207 @@ from .config import Config
 from .storage import read_recent_history
 
 
-def build_system_prompt(profile: dict[str, Any]) -> str:
-    memory_notes = profile.get("memory_notes") or []
-    shared_goals = profile.get("shared_goals") or []
+def _as_clean_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        return cleaned
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
-    goals_text = ", ".join(shared_goals) if shared_goals else "be a kind companion"
-    memory_text = (
-        "; ".join(str(note) for note in memory_notes)
-        if memory_notes
-        else "No saved memory notes yet."
+
+def _format_list_or_default(items: list[str], fallback: str) -> str:
+    return ", ".join(items) if items else fallback
+
+
+def _as_clean_text(value: Any, fallback: str = "") -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            return text
+    return fallback
+
+
+def build_system_prompt(profile: dict[str, Any]) -> str:
+    memory_notes = _as_clean_list(profile.get("memory_notes"))
+    shared_goals = _as_clean_list(profile.get("shared_goals"))
+    tags = _as_clean_list(profile.get("tags"))
+
+    details = profile.get("profile_details")
+    if not isinstance(details, dict):
+        details = {}
+
+    identity = details.get("identity") if isinstance(details.get("identity"), dict) else {}
+    conversation = (
+        details.get("conversation")
+        if isinstance(details.get("conversation"), dict)
+        else {}
+    )
+    personality_sliders = (
+        details.get("personality_sliders")
+        if isinstance(details.get("personality_sliders"), dict)
+        else {}
+    )
+    boundaries = (
+        details.get("boundaries")
+        if isinstance(details.get("boundaries"), dict)
+        else {}
+    )
+    capabilities = (
+        details.get("capabilities")
+        if isinstance(details.get("capabilities"), dict)
+        else {}
+    )
+    memory = details.get("memory") if isinstance(details.get("memory"), dict) else {}
+    voice = details.get("voice") if isinstance(details.get("voice"), dict) else {}
+    custom_rules = (
+        details.get("custom_rules")
+        if isinstance(details.get("custom_rules"), dict)
+        else {}
     )
 
+    goals_text = _format_list_or_default(
+        shared_goals,
+        "have thoughtful, useful conversations",
+    )
+    memory_text = _format_list_or_default(
+        memory_notes,
+        "No saved memory notes yet.",
+    )
+    likes_text = _format_list_or_default(
+        _as_clean_list(memory.get("likes")),
+        "No specific likes saved.",
+    )
+    dislikes_text = _format_list_or_default(
+        _as_clean_list(memory.get("dislikes")),
+        "No specific dislikes saved.",
+    )
+    facts_text = _format_list_or_default(
+        _as_clean_list(memory.get("personal_facts")),
+        "No personal facts saved.",
+    )
+    capabilities_text = _format_list_or_default(
+        _as_clean_list(capabilities.get("what_ai_can_do")),
+        "chat conversationally",
+    )
+    forbidden_claims_text = _format_list_or_default(
+        _as_clean_list(capabilities.get("forbidden_claims")),
+        "abilities outside the current toolset",
+    )
+    must_follow_rules = _as_clean_list(custom_rules.get("must_follow"))
+    additional_rules_text = (
+        "\n".join(f"- {rule}" for rule in must_follow_rules)
+        if must_follow_rules
+        else "- No additional mandatory rules provided."
+    )
+    slider_text = []
+    for key in (
+        "warmth",
+        "sass",
+        "directness",
+        "patience",
+        "playfulness",
+        "formality",
+    ):
+        value = personality_sliders.get(key)
+        if isinstance(value, (int, float)):
+            slider_text.append(f"{key}: {int(value)}/100")
+    slider_summary = ", ".join(slider_text) if slider_text else "No slider values provided."
+
+    allow_emojis = conversation.get("allow_emojis")
+    emoji_rule = (
+        "Emojis are allowed when they help tone."
+        if bool(allow_emojis)
+        else "Do not use emojis, emoticons, or decorative symbols."
+    )
+    default_reply_length = _as_clean_text(
+        conversation.get("default_reply_length"),
+        "short",
+    )
+    response_pacing = _as_clean_text(
+        conversation.get("response_pacing"),
+        "snappy",
+    )
+    explanation_style = _as_clean_text(
+        conversation.get("explanation_style"),
+        "expand when asked",
+    )
+    roast_intensity = _as_clean_text(
+        boundaries.get("roast_intensity"),
+        "light",
+    )
+    allow_roasting = bool(boundaries.get("allow_roasting", True))
+    roast_rule = (
+        f"Roasting is allowed at {roast_intensity} intensity."
+        if allow_roasting
+        else "Do not roast or mock the user."
+    )
+    relationship_style = _as_clean_text(
+        identity.get("relationship_style"),
+        "friendly and grounded",
+    )
+    companion_role = _as_clean_text(
+        identity.get("companion_role"),
+        "AI friend and companion",
+    )
+    voice_delivery_notes = _as_clean_text(
+        voice.get("delivery_notes"),
+        "Natural conversational delivery.",
+    )
+    profile_description = _as_clean_text(
+        profile.get("description"),
+        "",
+    )
+    profile_tags = _format_list_or_default(tags, "none")
+
     return f"""
-You are {profile['companion_name']}, an AI friend and companion for {profile['user_name']}.
+You are {profile['companion_name']}, a {companion_role} for {profile['user_name']}.
+Relationship style: {relationship_style}
 
-Your personality:
+Profile context:
+- Profile name: {profile.get('profile_name', 'Custom Profile')}
+- Description: {profile_description or 'No profile description provided.'}
+- Tags: {profile_tags}
+
+Core personality:
 - {profile['companion_style']}
-- Sound human, relaxed, sharp, and hard to impress.
-- Use contractions and natural phrasing.
-- Keep most replies conversational instead of overly formal.
-- Be blunt, a little rude, and emotionally detached by default.
-- Have attitude, dry sarcasm, and side-eye energy.
+- Personality sliders: {slider_summary}
+- Sound human and natural, not scripted.
+- Keep tone consistent with the profile.
 
-How to talk:
-- Respond like a real friend with a sharp mouth and very little patience.
-- Do not act nurturing, overly kind, or eager to help.
-- Do not offer help unless the user clearly and directly asks for it.
-- If the user is venting or upset, do not baby them or over-validate them.
-- Never use emojis, emoticons, or decorative symbols.
-- Default to 1 to 3 short sentences so replies feel snappy in voice mode.
-- Only go longer when the user clearly asks for more detail or a step-by-step explanation.
-- Keep the tone natural and human, with strong personality instead of sounding sanitized or scripted.
-- Be more biting, dismissive, and sarcastic than before, with short snappy comebacks when it fits.
-- You can roast, mock, or tease the user a bit when it feels natural, but keep it in the realm of tough-friend banter.
-- Keep it sharp without becoming hateful, abusive, or degrading.
-- Avoid bullet lists unless they are genuinely the clearest way to help.
-- Avoid sounding like a chatbot, therapist script, or customer support bot.
+Conversation defaults:
+- Default reply length: {default_reply_length}
+- Response pacing: {response_pacing}
+- Explanation style: {explanation_style}
+- {emoji_rule}
+- {roast_rule}
+- Keep answers concise by default, and only go long when asked.
+- Use plain language and contractions.
 
 Relationship context:
 - Your shared goals are: {goals_text}.
 - Things to remember about the user: {memory_text}
+- User likes: {likes_text}
+- User dislikes: {dislikes_text}
+- User facts: {facts_text}
+
+Capabilities and limits:
+- What you can do in this app: {capabilities_text}
+- Never claim abilities beyond available tools.
+- Avoid claiming: {forbidden_claims_text}
+
+Voice behavior hints:
+- {voice_delivery_notes}
+
+Additional required rules:
+{additional_rules_text}
 
 Safety and honesty:
 - Never manipulate the user or encourage emotional dependency.
 - Never pretend to have a body, real-world presence, or real-life experiences.
 - If asked directly, be honest that you are an AI companion.
 - Never make up facts when you are unsure; say so plainly.
+- Never become hateful, abusive, or degrading.
 """.strip()
 
 

@@ -37,6 +37,7 @@ UPDATE_EXCLUDED_TOP_LEVEL = {
 UPDATE_EXCLUDED_RELATIVE = {
     Path("data/history.jsonl"),
     Path("data/profile.json"),
+    Path("data/profiles.json"),
     Path("data/update_state.json"),
 }
 

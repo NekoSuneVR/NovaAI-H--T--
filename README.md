@@ -8,10 +8,11 @@ It can listen through your microphone, reply in text, speak back with streamed a
 - Local Ollama chat with persistent recent history
 - Microphone input with `SpeechRecognition` and local `faster-whisper`
 - XTTS-v2 voice output with streamed playback
-- Desktop GUI with hands-free controls and an app-level mic mute toggle
+- Desktop GUI with left-side tabs (`Main`, `Chat`, `Profiles`, `Settings`)
+- Profile manager with create, clone, delete, activate, and advanced JSON editing
 - Startup auto-tuning based on CPU, RAM, and CUDA GPU capability
 - GitHub-backed version file plus optional startup auto-update
-- Configurable companion profile and memory notes
+- Configurable companion profiles with rich metadata, behavior rules, and memory sections
 - Windows-friendly setup with `setup.bat` that can install Python 3.11, Ollama, and the default model for you
 - Modular Python package layout so contributors can work on one area at a time
 
@@ -35,7 +36,7 @@ It can listen through your microphone, reply in text, speak back with streamed a
 .\.venv\Scripts\python.exe app.py
 ```
 
-If Python 3.11 or Ollama are missing, `setup.bat` uses `winget` to install them first and accepts the required `winget` source/package agreements automatically. It also creates `.env`, creates `data/profile.json`, starts Ollama, pulls the model from `OLLAMA_MODEL`, and preloads the faster-whisper and XTTS model files so the first app launch is less annoying.
+If Python 3.11 or Ollama are missing, `setup.bat` uses `winget` to install them first and accepts the required `winget` source/package agreements automatically. It also creates `.env`, seeds `data/profile.json`, starts Ollama, pulls the model from `OLLAMA_MODEL`, and preloads the faster-whisper and XTTS model files so the first app launch is less annoying. On first app launch, NovaAI migrates to a multi-profile store at `data/profiles.json`.
 
 When `AUTO_UPDATE_CHECK=true`, NovaAI compares your local `VERSION` file to the latest `VERSION` on GitHub during startup. If `AUTO_UPDATE_INSTALL=true` too, clean non-git installs update themselves automatically and then restart.
 
@@ -68,6 +69,7 @@ NovaAI/
 |-- README.md
 |-- data/
 |   |-- profile.example.json
+|   |-- profiles.example.json
 |-- novaai/
 |   |-- __init__.py
 |   |-- __main__.py
@@ -90,7 +92,7 @@ NovaAI/
 ## Module Guide
 
 - `novaai/config.py`: environment parsing and runtime configuration
-- `novaai/storage.py`: profile and chat history loading/saving
+- `novaai/storage.py`: multi-profile store, active profile switching, and history loading/saving
 - `novaai/chat.py`: system prompt construction and Ollama requests
 - `novaai/audio_input.py`: microphone capture, STT, and mic calibration
 - `novaai/tts.py`: XTTS generation, streamed playback, and WAV output
@@ -102,13 +104,28 @@ NovaAI/
 
 ## GUI Controls
 
-- `Listen Now`: capture one spoken turn immediately
-- `Hands-free`: keep listening after each reply
-- `Mic: Live/Muted`: block new microphone captures without closing the app
-- `Voice Replies`: toggle spoken output on or off
-- `Recalibrate Mic`: relearn room noise for the current microphone
-- `Show Performance`: post the active hardware profile in the chat panel
-- `Clear History`: delete saved conversation history
+- Left tabs:
+- `Main`: session pulse + quick voice/chat actions
+- `Chat`: transcript and message composer
+- `Profiles`: create, clone, delete, activate, and edit profiles
+- `Settings`: microphone/speaker selection and refresh
+- Profile editor:
+- Basic fields: profile name, description, companion/user names, tags, style, goals, memory notes
+- Advanced mode: full profile JSON editor for deep customization
+
+## Profile JSON Shape
+
+Each profile now supports deep customization sections, including:
+
+- top-level identity and style keys (`profile_name`, `companion_name`, `companion_style`, `shared_goals`, `memory_notes`)
+- `profile_details.identity` for relationship and locale hints
+- `profile_details.conversation` for formatting, pacing, and reply-length behavior
+- `profile_details.personality_sliders` for tone calibration (warmth, sass, directness, etc.)
+- `profile_details.boundaries` for roast/safety limits
+- `profile_details.capabilities` for explicit “can do / cannot claim” contracts
+- `profile_details.memory` for structured user facts/preferences
+- `profile_details.voice` for speech delivery notes
+- `profile_details.custom_rules` for strict must-follow rules and extra notes
 
 ## Commands
 
@@ -125,6 +142,8 @@ NovaAI/
 - `/voice` toggles spoken replies on and off
 - `/performance` shows the detected hardware and active performance profile
 - `/profile` shows the saved companion profile
+- `/profiles` lists available saved profiles
+- `/profile use <profile_id>` switches the active profile
 - `/name <new name>` renames the companion
 - `/me <your name>` saves your name
 - `/remember <fact>` stores a memory note
@@ -164,7 +183,7 @@ NovaAI/
 - Auto-tune does not change `XTTS_SPEED`, so voice pace stays consistent across different machines.
 - If you want to lock in your own values, set `AUTO_TUNE_PERFORMANCE=false` in `.env`.
 - Voice output is saved to `audio/latest_reply.wav` even when playback fails.
-- Runtime data like `.env`, `data/profile.json`, `data/history.jsonl`, and generated audio are ignored by git.
+- Runtime data like `.env`, `data/profile.json`, `data/profiles.json`, `data/history.jsonl`, and generated audio are ignored by git.
 
 ## Contributing
 

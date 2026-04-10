@@ -10,5 +10,6 @@ __pycache__/
 audio/
 data/history.jsonl
 data/profile.json
+data/profiles.json
 data/update_state.json
 vendor/

@@ -18,9 +18,11 @@ from .models import CommandResult, SessionState, UserTurn
 from .storage import (
     append_history,
     ensure_runtime_dirs,
+    list_profiles,
     load_profile,
     reset_history,
     save_profile,
+    set_active_profile,
 )
 from .tts import (
     describe_tts_voice,
@@ -67,8 +69,8 @@ def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) 
     print(
         "Commands: /help, /mode <voice|text>, /listen, /recalibrate, /mics, "
         "/mic <index|default>, /speakers, /speaker <name>, /voice [on|off], "
-        "/performance, "
-        "/profile, /name <new name>, /me <your name>, /remember <fact>, "
+        "/performance, /profiles, /profile, /profile use <id>, "
+        "/name <new name>, /me <your name>, /remember <fact>, "
         "/reset, /exit"
     )
     print()
@@ -93,7 +95,9 @@ def print_help() -> None:
     print("/voice on               Always speak replies")
     print("/voice off              Stop speaking replies")
     print("/performance            Show the auto-tuned performance profile")
+    print("/profiles               List saved profiles")
     print("/profile                Show the current saved profile")
+    print("/profile use <id>       Switch to a different saved profile")
     print("/name <new name>        Rename your companion")
     print("/me <your name>         Set your name")
     print("/remember <fact>        Save something important for future chats")
@@ -289,6 +293,34 @@ def handle_command(
     if lowered == "/profile":
         print()
         print(json.dumps(profile, indent=2, ensure_ascii=False))
+        print()
+        return CommandResult(handled=True)
+
+    if lowered.startswith("/profile use "):
+        target_profile_id = command[13:].strip()
+        if not target_profile_id:
+            print("Use /profile use <profile_id>.")
+            return CommandResult(handled=True)
+        try:
+            active_profile = set_active_profile(target_profile_id)
+        except RuntimeError as exc:
+            print(exc)
+            return CommandResult(handled=True)
+        profile.clear()
+        profile.update(active_profile)
+        print(f"Active profile is now {profile.get('profile_name', target_profile_id)}.")
+        return CommandResult(handled=True)
+
+    if lowered == "/profiles":
+        print()
+        print("Saved profiles:")
+        for summary in list_profiles():
+            suffix = " (active)" if summary["is_active"] else ""
+            print(
+                f"- {summary['profile_id']}: {summary['profile_name']} "
+                f"[{summary['companion_name']}]"
+                f"{suffix}"
+            )
         print()
         return CommandResult(handled=True)
 
