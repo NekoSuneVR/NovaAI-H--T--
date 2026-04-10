@@ -257,6 +257,26 @@ def choose_output_playback_plan(
     channels: int = 1,
 ) -> OutputPlaybackPlan:
     normalized_source_rate = max(8000, int(source_sample_rate))
+    device_default_rate: int | None = None
+    try:
+        device_info = resolve_output_device_info(output_device_index)
+        device_default_rate = max(8000, int(device_info["default_sample_rate"]))
+    except RuntimeError:
+        device_default_rate = None
+
+    # Prefer the device's native default rate first. A few Windows drivers "accept"
+    # uncommon rates but still run the stream at their native mode, which can sound
+    # chipmunked. Using the default device rate avoids that class of mismatch.
+    if device_default_rate is not None and can_use_output_sample_rate(
+        output_device_index,
+        device_default_rate,
+        channels=channels,
+    ):
+        return OutputPlaybackPlan(
+            sample_rate=device_default_rate,
+            requires_resample=device_default_rate != normalized_source_rate,
+        )
+
     if can_use_output_sample_rate(
         output_device_index,
         normalized_source_rate,
@@ -268,11 +288,8 @@ def choose_output_playback_plan(
         )
 
     candidate_rates: list[int] = []
-    try:
-        device_info = resolve_output_device_info(output_device_index)
-        candidate_rates.append(max(8000, int(device_info["default_sample_rate"])))
-    except RuntimeError:
-        pass
+    if device_default_rate is not None:
+        candidate_rates.append(device_default_rate)
 
     candidate_rates.extend([48000, 44100])
     seen_rates = {normalized_source_rate}
