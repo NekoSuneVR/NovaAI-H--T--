@@ -6,6 +6,7 @@ import queue
 import re
 import threading
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -168,15 +169,139 @@ def describe_selected_speaker(config: Config) -> str:
     return f"#{device_info['index']} ({device_info['name']})"
 
 
-def get_output_playback_sample_rate(
+@dataclass(frozen=True)
+class OutputPlaybackPlan:
+    sample_rate: int
+    requires_resample: bool
+
+
+class StreamingLinearResampler:
+    def __init__(self, source_sample_rate: int, target_sample_rate: int) -> None:
+        self.source_sample_rate = max(1, int(source_sample_rate))
+        self.target_sample_rate = max(1, int(target_sample_rate))
+        self._step = float(self.source_sample_rate) / float(self.target_sample_rate)
+        self._buffer = np.empty((0, 1), dtype=np.float32)
+        self._next_source_position = 0.0
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        audio_array = np.asarray(audio, dtype=np.float32).reshape(-1, 1)
+        if audio_array.size == 0:
+            return np.empty((0,), dtype=np.float32)
+
+        if self._buffer.size == 0:
+            self._buffer = audio_array.copy()
+        else:
+            self._buffer = np.concatenate([self._buffer, audio_array], axis=0)
+
+        resampled = self._consume_available()
+        return np.ascontiguousarray(resampled.reshape(-1), dtype=np.float32)
+
+    def flush(self) -> np.ndarray:
+        if self._buffer.size == 0:
+            return np.empty((0,), dtype=np.float32)
+
+        # Pad with the final frame once so the last interpolation window can finish cleanly.
+        self._buffer = np.concatenate([self._buffer, self._buffer[-1:, :]], axis=0)
+        resampled = self._consume_available()
+        self._buffer = np.empty((0, 1), dtype=np.float32)
+        self._next_source_position = 0.0
+        return np.ascontiguousarray(resampled.reshape(-1), dtype=np.float32)
+
+    def _consume_available(self) -> np.ndarray:
+        if self._buffer.shape[0] < 2:
+            return np.empty((0, 1), dtype=np.float32)
+
+        outputs: list[np.ndarray] = []
+        max_source_position = float(self._buffer.shape[0] - 1)
+        while self._next_source_position <= max_source_position:
+            low_index = int(self._next_source_position)
+            high_index = min(low_index + 1, self._buffer.shape[0] - 1)
+            blend = self._next_source_position - low_index
+            sample = (
+                (1.0 - blend) * self._buffer[low_index]
+                + blend * self._buffer[high_index]
+            ).astype(np.float32)
+            outputs.append(sample)
+            self._next_source_position += self._step
+
+        consumed_prefix = max(0, int(self._next_source_position) - 1)
+        if consumed_prefix > 0:
+            self._buffer = self._buffer[consumed_prefix:, :]
+            self._next_source_position -= consumed_prefix
+
+        if not outputs:
+            return np.empty((0, 1), dtype=np.float32)
+        return np.stack(outputs, axis=0)
+
+
+def can_use_output_sample_rate(
     output_device_index: int | None,
-    fallback_sample_rate: int,
-) -> int:
+    sample_rate: int,
+    channels: int = 1,
+) -> bool:
+    try:
+        sd.check_output_settings(
+            device=output_device_index,
+            channels=max(1, int(channels)),
+            dtype="float32",
+            samplerate=max(8000, int(sample_rate)),
+        )
+    except Exception:
+        return False
+    return True
+
+
+def choose_output_playback_plan(
+    output_device_index: int | None,
+    source_sample_rate: int,
+    channels: int = 1,
+) -> OutputPlaybackPlan:
+    normalized_source_rate = max(8000, int(source_sample_rate))
+    if can_use_output_sample_rate(
+        output_device_index,
+        normalized_source_rate,
+        channels=channels,
+    ):
+        return OutputPlaybackPlan(
+            sample_rate=normalized_source_rate,
+            requires_resample=False,
+        )
+
+    candidate_rates: list[int] = []
     try:
         device_info = resolve_output_device_info(output_device_index)
+        candidate_rates.append(max(8000, int(device_info["default_sample_rate"])))
     except RuntimeError:
-        return fallback_sample_rate
-    return max(8000, int(device_info["default_sample_rate"]))
+        pass
+
+    candidate_rates.extend([48000, 44100])
+    seen_rates = {normalized_source_rate}
+    for candidate_rate in candidate_rates:
+        if candidate_rate in seen_rates:
+            continue
+        seen_rates.add(candidate_rate)
+        if can_use_output_sample_rate(
+            output_device_index,
+            candidate_rate,
+            channels=channels,
+        ):
+            return OutputPlaybackPlan(
+                sample_rate=candidate_rate,
+                requires_resample=candidate_rate != normalized_source_rate,
+            )
+
+    fallback_rate = next(
+        (
+            candidate_rate
+            for candidate_rate in candidate_rates
+            if candidate_rate != normalized_source_rate
+        ),
+        normalized_source_rate,
+    )
+    return OutputPlaybackPlan(
+        sample_rate=fallback_rate,
+        requires_resample=fallback_rate != normalized_source_rate,
+    )
 
 
 def resample_audio_for_output(
@@ -522,7 +647,7 @@ def stream_xtts_audio(
     output_path: Path,
 ) -> Path:
     sample_rate = get_xtts_output_sample_rate(model)
-    playback_sample_rate = get_output_playback_sample_rate(
+    playback_plan = choose_output_playback_plan(
         config.speaker_device_index,
         sample_rate,
     )
@@ -551,12 +676,17 @@ def stream_xtts_audio(
         buffered_samples += chunk_or_end.size
 
     audio_stream = sd.OutputStream(
-        samplerate=playback_sample_rate,
+        samplerate=playback_plan.sample_rate,
         channels=1,
         dtype="float32",
         blocksize=2048,
         latency="high",
         device=config.speaker_device_index,
+    )
+    stream_resampler = (
+        StreamingLinearResampler(sample_rate, playback_plan.sample_rate)
+        if playback_plan.requires_resample
+        else None
     )
 
     try:
@@ -577,14 +707,23 @@ def stream_xtts_audio(
                 audio_chunk = chunk_or_end
 
             audio_chunks.append(audio_chunk)
-            playback_chunk = resample_audio_for_output(
-                audio_chunk,
-                sample_rate,
-                playback_sample_rate,
+            playback_chunk = (
+                stream_resampler.process(audio_chunk)
+                if stream_resampler is not None
+                else np.ascontiguousarray(audio_chunk, dtype=np.float32)
             )
+            if playback_chunk.size == 0:
+                continue
             audio_stream.write(
                 np.ascontiguousarray(playback_chunk.reshape(-1, 1), dtype=np.float32)
             )
+
+        if stream_resampler is not None:
+            final_chunk = stream_resampler.flush()
+            if final_chunk.size > 0:
+                audio_stream.write(
+                    np.ascontiguousarray(final_chunk.reshape(-1, 1), dtype=np.float32)
+                )
     finally:
         try:
             audio_stream.stop()
@@ -637,20 +776,25 @@ def play_wav_with_sounddevice(
     else:
         audio = audio.reshape(-1, 1)
 
-    playback_sample_rate = get_output_playback_sample_rate(
+    playback_plan = choose_output_playback_plan(
         output_device_index,
         sample_rate,
+        channels=channels,
     )
-    playback_audio = resample_audio_for_output(
-        audio,
-        sample_rate,
-        playback_sample_rate,
+    playback_audio = (
+        resample_audio_for_output(
+            audio,
+            sample_rate,
+            playback_plan.sample_rate,
+        )
+        if playback_plan.requires_resample
+        else np.ascontiguousarray(audio, dtype=np.float32)
     )
 
     try:
         sd.play(
             playback_audio,
-            samplerate=playback_sample_rate,
+            samplerate=playback_plan.sample_rate,
             device=output_device_index,
             blocking=True,
         )

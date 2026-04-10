@@ -24,7 +24,6 @@ class PerformanceProfile:
     xtts_use_gpu: bool
     xtts_stream_chunk_size: int
     xtts_stream_buffer_seconds: float
-    xtts_speed: float
     stt_use_gpu: bool
     stt_model: str
     stt_compute_type: str
@@ -182,7 +181,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 450,
                 "xtts_stream_chunk_size": 14,
                 "xtts_stream_buffer_seconds": 2.4,
-                "xtts_speed": 1.15,
                 "stt_model": "base.en",
                 "stt_beam_size": 2,
                 "stt_best_of": 2,
@@ -193,7 +191,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 700,
                 "xtts_stream_chunk_size": 18,
                 "xtts_stream_buffer_seconds": 1.8,
-                "xtts_speed": 1.10,
                 "stt_model": "small.en",
                 "stt_beam_size": 3,
                 "stt_best_of": 3,
@@ -204,7 +201,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 900,
                 "xtts_stream_chunk_size": 24,
                 "xtts_stream_buffer_seconds": 1.2,
-                "xtts_speed": 1.06,
                 "stt_model": "small.en",
                 "stt_beam_size": 3,
                 "stt_best_of": 3,
@@ -217,7 +213,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 600,
                 "xtts_stream_chunk_size": 16,
                 "xtts_stream_buffer_seconds": 2.3,
-                "xtts_speed": 1.12,
                 "stt_model": "base.en",
                 "stt_beam_size": 3,
                 "stt_best_of": 3,
@@ -228,7 +223,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 1000,
                 "xtts_stream_chunk_size": 20,
                 "xtts_stream_buffer_seconds": 1.8,
-                "xtts_speed": 1.08,
                 "stt_model": "small.en",
                 "stt_beam_size": 4,
                 "stt_best_of": 4,
@@ -239,7 +233,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 1400,
                 "xtts_stream_chunk_size": 28,
                 "xtts_stream_buffer_seconds": 1.2,
-                "xtts_speed": 1.03,
                 "stt_model": "medium.en",
                 "stt_beam_size": 5,
                 "stt_best_of": 5,
@@ -252,7 +245,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 750,
                 "xtts_stream_chunk_size": 16,
                 "xtts_stream_buffer_seconds": 2.4,
-                "xtts_speed": 1.08,
                 "stt_model": "small.en",
                 "stt_beam_size": 4,
                 "stt_best_of": 4,
@@ -263,7 +255,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 1400,
                 "xtts_stream_chunk_size": 24,
                 "xtts_stream_buffer_seconds": 1.8,
-                "xtts_speed": 1.02,
                 "stt_model": "medium.en",
                 "stt_beam_size": 5,
                 "stt_best_of": 5,
@@ -274,7 +265,6 @@ def _profile_defaults(goal: str, tier: str) -> dict[str, float | int | str]:
                 "ollama_num_predict": 1800,
                 "xtts_stream_chunk_size": 30,
                 "xtts_stream_buffer_seconds": 1.2,
-                "xtts_speed": 1.00,
                 "stt_model": "medium.en",
                 "stt_beam_size": 6,
                 "stt_best_of": 6,
@@ -325,7 +315,6 @@ def choose_performance_profile(
         xtts_use_gpu=xtts_use_gpu,
         xtts_stream_chunk_size=int(settings["xtts_stream_chunk_size"]),
         xtts_stream_buffer_seconds=float(settings["xtts_stream_buffer_seconds"]),
-        xtts_speed=float(settings["xtts_speed"]),
         stt_use_gpu=stt_use_gpu,
         stt_model=stt_model,
         stt_compute_type=stt_compute_type,

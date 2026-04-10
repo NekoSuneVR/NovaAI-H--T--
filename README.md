@@ -144,6 +144,7 @@ NovaAI/
 - `OLLAMA_MODEL`: the Ollama chat model name
 - `OLLAMA_NUM_PREDICT`: reply token budget
 - `VOICE_ENABLED`: whether spoken replies start enabled (default is `false`)
+- `XTTS_SPEED`: speaking pace multiplier (`1.00` is natural speed)
 - `XTTS_STREAM_OUTPUT`: stream speech while audio is generating
 - `XTTS_CHUNK_MAX_CHARS`: safe per-chunk XTTS text limit
 - `XTTS_MAX_TEXT_CHARS`: maximum total spoken text for one reply
@@ -160,6 +161,7 @@ NovaAI/
 - Auto-update is conservative on purpose. If NovaAI sees a git checkout with local edits, it skips self-updating instead of risking your work.
 - The GUI mic mute is app-level, which means it stops NovaAI from starting new listens. It does not change the Windows system microphone mute state.
 - With auto-tune on, NovaAI overrides a few performance-sensitive values at startup so the app matches the current machine better.
+- Auto-tune does not change `XTTS_SPEED`, so voice pace stays consistent across different machines.
 - If you want to lock in your own values, set `AUTO_TUNE_PERFORMANCE=false` in `.env`.
 - Voice output is saved to `audio/latest_reply.wav` even when playback fails.
 - Runtime data like `.env`, `data/profile.json`, `data/history.jsonl`, and generated audio are ignored by git.

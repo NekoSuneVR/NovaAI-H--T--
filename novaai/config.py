@@ -166,11 +166,9 @@ class Config:
             if performance_profile is not None
             else max(0.0, float(os.getenv("XTTS_STREAM_BUFFER_SECONDS", "1.8")))
         )
-        xtts_speed = (
-            performance_profile.xtts_speed
-            if performance_profile is not None
-            else max(0.8, float(os.getenv("XTTS_SPEED", "1.08")))
-        )
+        # Keep voice pace consistent across machines.
+        # Auto-tune should optimize latency and reliability, not alter speaking speed.
+        xtts_speed = max(0.8, float(os.getenv("XTTS_SPEED", "1.0")))
         request_timeout = (
             performance_profile.request_timeout
             if performance_profile is not None
