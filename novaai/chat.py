@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 from .config import Config
 from .storage import read_recent_history
+
+PLACEHOLDER_PATTERN = re.compile(r"\[[^\]\n]{3,120}\]")
+RAW_URL_PATTERN = re.compile(r"(?i)(?:<\s*)?(?:https?://|www\.)[^\s>]+(?:\s*>)?")
+MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
 
 
 def _as_clean_list(value: Any) -> list[str]:
@@ -184,6 +190,7 @@ Conversation defaults:
 - {roast_rule}
 - Keep answers concise by default, and only go long when asked.
 - Use plain language and contractions.
+- Do not include raw URLs or hyperlinks in replies unless the user explicitly asks for a link.
 
 Relationship context:
 - Your shared goals are: {goals_text}.
@@ -212,13 +219,142 @@ Safety and honesty:
 """.strip()
 
 
+def _contains_placeholder_markup(text: str) -> bool:
+    return bool(PLACEHOLDER_PATTERN.search(text))
+
+
+def _strip_links_from_reply(text: str) -> str:
+    without_markdown_links = MARKDOWN_LINK_PATTERN.sub(r"\1", text)
+    without_raw_urls = RAW_URL_PATTERN.sub("", without_markdown_links)
+
+    cleaned_lines: list[str] = []
+    for line in without_raw_urls.splitlines():
+        cleaned = re.sub(r"\s{2,}", " ", line).strip()
+        cleaned = re.sub(r"[:;,.\-]\s*$", "", cleaned)
+        if cleaned:
+            cleaned_lines.append(cleaned)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def _extract_web_items(web_context: str) -> list[tuple[str, str, str]]:
+    items: list[tuple[str, str, str]] = []
+    current_title = ""
+    current_url = ""
+    current_snippet = ""
+    current_excerpt = ""
+
+    def append_current() -> None:
+        if current_url and (current_excerpt or current_snippet):
+            items.append(
+                (
+                    current_title or "Result",
+                    current_url,
+                    current_excerpt or current_snippet,
+                )
+            )
+
+    for raw_line in web_context.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^\d+\.\s+", line):
+            append_current()
+            current_title = re.sub(r"^\d+\.\s+", "", line).strip()
+            current_url = ""
+            current_snippet = ""
+            current_excerpt = ""
+            continue
+        if line.startswith("URL:"):
+            current_url = line[4:].strip()
+            continue
+        if line.startswith("Snippet:"):
+            current_snippet = line[8:].strip()
+            continue
+        if line.startswith("Website excerpt:"):
+            current_excerpt = line[16:].strip()
+            continue
+
+    append_current()
+    return items
+
+
+def _extract_web_query(web_context: str) -> str:
+    for raw_line in web_context.splitlines():
+        line = raw_line.strip()
+        if line.lower().startswith("search query:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _shorten(text: str, max_chars: int = 170) -> str:
+    compact = " ".join(text.strip().split())
+    if len(compact) <= max_chars:
+        return compact
+    clipped = compact[: max_chars - 3].rsplit(" ", 1)[0].strip()
+    return (clipped or compact[: max_chars - 3]).rstrip(" ,.;:") + "..."
+
+
+def _host_from_url(url: str) -> str:
+    host = urlparse(url).netloc.lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    return host or "source"
+
+
+def _build_web_fallback_reply(user_text: str, web_context: str) -> str | None:
+    items = _extract_web_items(web_context)
+    if not items:
+        return None
+
+    search_query = _extract_web_query(web_context)
+    first_title, first_url, first_snippet = items[0]
+    summary = _shorten(first_snippet or first_title, max_chars=170)
+
+    seen_hosts: list[str] = []
+    for _title, url, _snippet in items:
+        host = _host_from_url(url)
+        if host not in seen_hosts:
+            seen_hosts.append(host)
+    source_text = ", ".join(seen_hosts[:2])
+
+    lead = "Quick web check"
+    if search_query:
+        lead += f" for \"{search_query}\""
+    reply = f"{lead}: {summary}"
+    if source_text:
+        reply += f" Sources: {source_text}."
+
+    if "weather" in user_text.lower() and " weather " in f" {search_query.lower()} ":
+        if " in " not in f" {search_query.lower()} ":
+            reply += " Want me to check your exact city/suburb?"
+    return reply
+
+
 def request_reply(
     user_text: str,
     profile: dict[str, Any],
     config: Config,
+    web_context: str | None = None,
 ) -> str:
     messages = [{"role": "system", "content": build_system_prompt(profile)}]
     messages.extend(read_recent_history(config.history_turns))
+    if web_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Use the following fresh web context when relevant. "
+                    "Do not fabricate details. Mention source names only and do "
+                    "not output any links or raw URLs. Never output placeholder text like "
+                    "[Weather information here] or [Insert source]. "
+                    "If important details are missing, say what is missing. "
+                    "Keep the final answer casual and concise by default. "
+                    "Prefer details from any 'Website excerpt' lines when available."
+                ),
+            }
+        )
+        messages.append({"role": "system", "content": web_context})
     messages.append({"role": "user", "content": user_text})
 
     payload = {
@@ -262,6 +398,12 @@ def request_reply(
 
     try:
         data = response.json()
-        return data["message"]["content"].strip()
+        reply = data["message"]["content"].strip()
+        if web_context and _contains_placeholder_markup(reply):
+            fallback_reply = _build_web_fallback_reply(user_text, web_context)
+            if fallback_reply:
+                reply = fallback_reply
+        reply = _strip_links_from_reply(reply)
+        return reply
     except (ValueError, KeyError, TypeError) as exc:
         raise RuntimeError("Ollama returned an unexpected response format.") from exc

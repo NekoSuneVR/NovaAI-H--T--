@@ -34,6 +34,11 @@ from .tts import (
     speak_text,
 )
 from .utils import console_safe_text
+from .web_search import (
+    extract_web_query_from_request,
+    fetch_web_context,
+    should_auto_search,
+)
 
 
 def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) -> None:
@@ -57,6 +62,11 @@ def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) 
         f"Reply limit: {config.ollama_num_predict} tokens"
     )
     print(
+        f"Web browsing: {'on' if config.web_browsing_enabled else 'off'} | "
+        f"Auto-search: {'on' if config.web_auto_search else 'off'} | "
+        f"Max results: {config.web_max_results}"
+    )
+    print(
         f"Performance: {config.performance_profile} | "
         f"Auto-tune: {'on' if config.auto_tune_performance else 'off'} "
         f"({config.auto_tune_goal})"
@@ -67,8 +77,9 @@ def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) 
         "Hands-free mode listens after each reply. Text mode keeps the keyboard prompt."
     )
     print(
-        "Commands: /help, /mode <voice|text>, /listen, /recalibrate, /mics, "
+        "Commands: /help, /mode <voice|text>, /listen, /ask, /recalibrate, /mics, "
         "/mic <index|default>, /speakers, /speaker <name>, /voice [on|off], "
+        "/web [on|off|auto on|auto off|clear|<query>], "
         "/performance, /profiles, /profile, /profile use <id>, "
         "/name <new name>, /me <your name>, /remember <fact>, "
         "/reset, /exit"
@@ -83,6 +94,7 @@ def print_help() -> None:
     print("/mode voice             Turn on hands-free microphone input")
     print("/mode text              Switch back to keyboard input")
     print("/listen                 Capture one spoken turn right now")
+    print("/ask                    Alias for /listen")
     print("/recalibrate            Relearn the room noise before listening")
     print("/mics                   List available microphone devices")
     print("/mic                    Show the selected microphone")
@@ -94,6 +106,13 @@ def print_help() -> None:
     print("/voice                  Toggle spoken replies on or off")
     print("/voice on               Always speak replies")
     print("/voice off              Stop speaking replies")
+    print("/web                    Show web browsing status")
+    print("/web on                 Enable web browsing")
+    print("/web off                Disable web browsing")
+    print("/web auto on            Auto-search for likely web/current-event prompts")
+    print("/web auto off           Disable auto web search")
+    print("/web clear              Clear queued web context")
+    print("/web <query>            Search now and use results on the next reply")
     print("/performance            Show the auto-tuned performance profile")
     print("/profiles               List saved profiles")
     print("/profile                Show the current saved profile")
@@ -131,6 +150,78 @@ def parse_voice_setting(argument: str) -> bool | None:
     if normalized in {"off", "false", "0", "no"}:
         return False
     return None
+
+
+def print_web_status(config: Config, state: SessionState) -> None:
+    queued_query = state.pending_web_query or "none"
+    queued_status = "yes" if state.pending_web_context else "no"
+    print(
+        "Web browsing: "
+        f"{'on' if config.web_browsing_enabled else 'off'} | "
+        f"Auto-search: {'on' if config.web_auto_search else 'off'} | "
+        f"Max results: {config.web_max_results} | "
+        f"Timeout: {config.web_timeout_seconds}s | "
+        f"Region: {config.web_region} | "
+        f"SafeSearch: {config.web_safesearch}"
+    )
+    print(f"Queued web query: {queued_query} | Queued context ready: {queued_status}")
+
+
+def handle_web_command(command: str, config: Config, state: SessionState) -> None:
+    lowered = command.strip().lower()
+    if lowered == "/web":
+        print_web_status(config, state)
+        return
+
+    argument = command[4:].strip()
+    if not argument:
+        print_web_status(config, state)
+        return
+
+    lowered_argument = argument.lower()
+
+    if lowered_argument in {"on", "off"}:
+        config.web_browsing_enabled = lowered_argument == "on"
+        if not config.web_browsing_enabled:
+            state.pending_web_context = None
+            state.pending_web_query = None
+        print(
+            f"Web browsing is now {'on' if config.web_browsing_enabled else 'off'}."
+        )
+        return
+
+    if lowered_argument in {"clear", "reset"}:
+        state.pending_web_context = None
+        state.pending_web_query = None
+        print("Cleared queued web context.")
+        return
+
+    if lowered_argument == "auto":
+        print(
+            f"Web auto-search is {'on' if config.web_auto_search else 'off'}."
+        )
+        return
+
+    if lowered_argument.startswith("auto "):
+        setting = parse_voice_setting(argument[5:])
+        if setting is None:
+            print("Use /web auto on or /web auto off.")
+            return
+        config.web_auto_search = setting
+        print(f"Web auto-search is now {'on' if config.web_auto_search else 'off'}.")
+        return
+
+    if not config.web_browsing_enabled:
+        print("Web browsing is off. Run /web on first.")
+        return
+
+    bundle = fetch_web_context(argument, config)
+    state.pending_web_query = bundle.query
+    state.pending_web_context = bundle.context
+    print(
+        f"Queued {bundle.result_count} web results for the next reply "
+        f"(query: {bundle.query})."
+    )
 
 
 def handle_microphone_command(
@@ -240,7 +331,7 @@ def handle_command(
         print(f"Input mode is now {new_mode}.")
         return CommandResult(handled=True)
 
-    if lowered == "/listen":
+    if lowered in {"/listen", "/ask", "/voiceask"}:
         voice_turn = capture_voice_turn(config, profile, state)
         return CommandResult(handled=True, injected_turn=voice_turn)
 
@@ -288,6 +379,13 @@ def handle_command(
             return CommandResult(handled=True)
         state.voice_enabled = setting
         print(f"Voice output is now {'on' if state.voice_enabled else 'off'}.")
+        return CommandResult(handled=True)
+
+    if lowered == "/web" or lowered.startswith("/web "):
+        try:
+            handle_web_command(command, config, state)
+        except RuntimeError as exc:
+            print(f"[Web] {exc}")
         return CommandResult(handled=True)
 
     if lowered == "/profile":
@@ -462,8 +560,38 @@ def main() -> None:
         if not user_text:
             continue
 
+        web_context: str | None = None
+        if config.web_browsing_enabled:
+            web_query = state.pending_web_query
+            if state.pending_web_context:
+                web_context = state.pending_web_context
+                state.pending_web_context = None
+                state.pending_web_query = None
+                if web_query:
+                    print(f"[Web] Using queued results for: {web_query}")
+            else:
+                if not web_query:
+                    inferred_query = extract_web_query_from_request(user_text)
+                    if inferred_query:
+                        web_query = inferred_query
+                        print(f"[Web] Interpreted your request as lookup: {web_query}")
+                if not web_query and config.web_auto_search and should_auto_search(user_text):
+                    web_query = user_text
+                if web_query:
+                    try:
+                        bundle = fetch_web_context(web_query, config)
+                    except RuntimeError as exc:
+                        print(f"[Web] {exc}")
+                    else:
+                        web_context = bundle.context
+                        print(
+                            f"[Web] Found {bundle.result_count} results for: {bundle.query}"
+                        )
+                    finally:
+                        state.pending_web_query = None
+
         try:
-            reply = request_reply(user_text, profile, config)
+            reply = request_reply(user_text, profile, config, web_context=web_context)
         except RuntimeError as exc:
             print()
             print(f"[Companion error] {exc}")

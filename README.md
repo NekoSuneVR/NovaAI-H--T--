@@ -6,6 +6,8 @@ It can listen through your microphone, reply in text, speak back with streamed a
 ## Features
 
 - Local Ollama chat with persistent recent history
+- Optional web browsing support (manual `/web <query>` or auto-search mode)
+  - Web lookups now include short excerpts pulled from top result pages for more grounded answers.
 - Microphone input with `SpeechRecognition` and local `faster-whisper`
 - XTTS-v2 voice output with streamed playback
 - Desktop GUI with left-side tabs (`Main`, `Chat`, `Profiles`, `Settings`)
@@ -133,6 +135,7 @@ Each profile now supports deep customization sections, including:
 - `/mode voice` turns on hands-free microphone input
 - `/mode text` switches back to typing
 - `/listen` captures one spoken turn immediately
+- `/ask` alias for `/listen`
 - `/recalibrate` relearns room noise before listening
 - `/mics` lists available microphone devices
 - `/mic <index>` chooses a microphone
@@ -140,6 +143,13 @@ Each profile now supports deep customization sections, including:
 - `/speakers` lists built-in XTTS voices
 - `/speaker <name>` switches XTTS voice
 - `/voice` toggles spoken replies on and off
+- `/web` shows web browsing status
+- `/web on` enables web browsing
+- `/web off` disables web browsing
+- `/web auto on` enables automatic web lookups for likely current-event prompts
+- `/web auto off` disables automatic web lookups
+- `/web clear` clears any queued web context
+- `/web <query>` searches the web and applies the results to the next reply
 - `/performance` shows the detected hardware and active performance profile
 - `/profile` shows the saved companion profile
 - `/profiles` lists available saved profiles
@@ -149,6 +159,10 @@ Each profile now supports deep customization sections, including:
 - `/remember <fact>` stores a memory note
 - `/reset` clears conversation history
 - `/exit` quits the app
+
+In the GUI `Chat` tab, you can also click `Voice Ask` (or press `F8`) to capture a spoken prompt.
+With web browsing enabled, natural requests like "Hey, can you check the weather for me?" will auto-trigger a web lookup even if `/web auto` is off.
+Natural lookup also works for general topics like "can you search RTX 5090 price?" or "look up the latest Unreal Engine news."
 
 ## Configuration Highlights
 
@@ -162,6 +176,12 @@ Each profile now supports deep customization sections, including:
 - `NOVA_GITHUB_BRANCH`: override the GitHub branch used for update checks
 - `OLLAMA_MODEL`: the Ollama chat model name
 - `OLLAMA_NUM_PREDICT`: reply token budget
+- `WEB_BROWSING_ENABLED`: enable web search features
+- `WEB_AUTO_SEARCH`: automatically search for likely web/current-event prompts
+- `WEB_MAX_RESULTS`: number of search results to attach per lookup
+- `WEB_TIMEOUT_SECONDS`: timeout for web search requests
+- `WEB_REGION`: region code for web results (for example, `us-en`)
+- `WEB_SAFESEARCH`: web safe-search mode (`off`, `moderate`, or `strict`)
 - `VOICE_ENABLED`: whether spoken replies start enabled (default is `false`)
 - `XTTS_SPEED`: speaking pace multiplier (`1.00` is natural speed)
 - `XTTS_STREAM_OUTPUT`: stream speech while audio is generating

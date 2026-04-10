@@ -49,6 +49,15 @@ def normalize_stt_provider(value: str) -> str:
     return "faster-whisper"
 
 
+def normalize_web_safesearch(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"off", "none", "disabled"}:
+        return "off"
+    if normalized in {"strict", "high"}:
+        return "strict"
+    return "moderate"
+
+
 def parse_input_mode(argument: str) -> str | None:
     normalized = argument.strip().lower()
     if normalized in {"voice", "mic", "microphone", "handsfree", "hands-free"}:
@@ -83,6 +92,12 @@ class Config:
     history_turns: int
     temperature: float
     request_timeout: int
+    web_browsing_enabled: bool
+    web_auto_search: bool
+    web_max_results: int
+    web_timeout_seconds: int
+    web_region: str
+    web_safesearch: str
     voice_enabled: bool
     input_mode: str
     stt_provider: str
@@ -244,6 +259,14 @@ class Config:
             history_turns=int(os.getenv("HISTORY_TURNS", "10")),
             temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.95")),
             request_timeout=request_timeout,
+            web_browsing_enabled=parse_bool_env("WEB_BROWSING_ENABLED", True),
+            web_auto_search=parse_bool_env("WEB_AUTO_SEARCH", False),
+            web_max_results=max(1, min(10, int(os.getenv("WEB_MAX_RESULTS", "5")))),
+            web_timeout_seconds=max(5, int(os.getenv("WEB_TIMEOUT_SECONDS", "15"))),
+            web_region=os.getenv("WEB_REGION", "us-en").strip() or "us-en",
+            web_safesearch=normalize_web_safesearch(
+                os.getenv("WEB_SAFESEARCH", "moderate")
+            ),
             voice_enabled=parse_bool_env("VOICE_ENABLED", False),
             input_mode=normalize_input_mode(os.getenv("INPUT_MODE", "voice")),
             stt_provider=normalize_stt_provider(

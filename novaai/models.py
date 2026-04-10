@@ -12,6 +12,8 @@ from TTS.api import TTS
 class SessionState:
     voice_enabled: bool
     input_mode: str
+    pending_web_context: str | None = None
+    pending_web_query: str | None = None
     speech_recognizer: sr.Recognizer | None = None
     speech_recognizer_signature: tuple[Any, ...] | None = None
     mic_calibrated: bool = False

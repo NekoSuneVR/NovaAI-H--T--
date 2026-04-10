@@ -37,6 +37,11 @@ from .tts import (
     play_audio_file,
     speak_text,
 )
+from .web_search import (
+    extract_web_query_from_request,
+    fetch_web_context,
+    should_auto_search,
+)
 
 PALETTE = {
     "bg": "#07131d",
@@ -173,6 +178,7 @@ class NovaAIGui:
         self.mic_badge_text = tk.StringVar()
 
         self._build_ui()
+        self.root.bind("<F8>", self._on_voice_hotkey)
         self._refresh_profiles_panel(select_profile_id=self.active_profile_id)
         self._refresh_audio_device_choices(silent=True)
         self._load_recent_history()
@@ -186,6 +192,9 @@ class NovaAIGui:
         )
         self._append_system_message(
             "Mic mute is app-level. It blocks new captures here without touching the Windows microphone state."
+        )
+        self._append_system_message(
+            "Use Voice Ask on the Chat tab (or press F8) to speak a question."
         )
         self._print_console_diagnostics()
 
@@ -229,6 +238,11 @@ class NovaAIGui:
         print(
             f"[NovaAI GUI] Mic: {describe_selected_microphone(self.config)} | "
             f"Speaker: {describe_selected_speaker(self.config)}"
+        )
+        print(
+            f"[NovaAI GUI] Web: {'on' if self.config.web_browsing_enabled else 'off'} | "
+            f"Auto: {'on' if self.config.web_auto_search else 'off'} | "
+            f"Max results: {self.config.web_max_results}"
         )
         print()
 
@@ -802,14 +816,16 @@ class NovaAIGui:
         )
         composer.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         composer.grid_columnconfigure(0, weight=1)
+        composer.grid_columnconfigure(1, weight=0)
+        composer.grid_columnconfigure(2, weight=0)
 
         tk.Label(
             composer,
-            text="Send a message or slash command.",
+            text="Send text, use a slash command, or ask by voice.",
             bg=PALETTE["card_alt"],
             fg=PALETTE["muted"],
             font=("Segoe UI", 10),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
 
         self.message_entry = tk.Entry(
             composer,
@@ -824,6 +840,23 @@ class NovaAIGui:
         )
         self.message_entry.grid(row=1, column=0, sticky="ew", ipady=12)
         self.message_entry.bind("<Return>", self._on_send_pressed)
+
+        self.voice_input_button = tk.Button(
+            composer,
+            text="Voice Ask",
+            command=self.start_listen_once,
+            bg=PALETTE["card"],
+            fg=PALETTE["text"],
+            activebackground=PALETTE["input"],
+            activeforeground=PALETTE["text"],
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=12,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        )
+        self.voice_input_button.grid(row=1, column=1, padx=(12, 0))
 
         self.send_button = tk.Button(
             composer,
@@ -840,7 +873,7 @@ class NovaAIGui:
             font=("Bahnschrift SemiBold", 11),
             cursor="hand2",
         )
-        self.send_button.grid(row=1, column=1, padx=(12, 0))
+        self.send_button.grid(row=1, column=2, padx=(10, 0))
 
     def _build_profile_field(
         self,
@@ -2244,6 +2277,7 @@ class NovaAIGui:
         session_active = self.session_started
         interaction_enabled = session_active and not busy
         send_state = "normal" if interaction_enabled else "disabled"
+        voice_input_enabled = session_active and not (busy or self.mic_muted)
         selector_state = "disabled" if busy else "readonly"
 
         self.send_button.configure(
@@ -2252,6 +2286,16 @@ class NovaAIGui:
             fg=PALETTE["accent_text"] if interaction_enabled else PALETTE["muted_soft"],
             activebackground="#8be0ff" if interaction_enabled else PALETTE["card_alt"],
             cursor="hand2" if interaction_enabled else "arrow",
+        )
+        self.voice_input_button.configure(
+            state="normal" if voice_input_enabled else "disabled",
+            bg=PALETTE["accent_deep"] if voice_input_enabled else PALETTE["card_alt"],
+            fg=PALETTE["accent"] if voice_input_enabled else PALETTE["muted_soft"],
+            activebackground=PALETTE["accent_deep"]
+            if voice_input_enabled
+            else PALETTE["card_alt"],
+            activeforeground=PALETTE["accent"] if voice_input_enabled else PALETTE["muted_soft"],
+            cursor="hand2" if voice_input_enabled else "arrow",
         )
         self.message_entry.configure(
             state="normal" if interaction_enabled else "disabled",
@@ -2391,6 +2435,10 @@ class NovaAIGui:
     def _on_send_pressed(self, _event: object) -> None:
         self.send_text_message()
 
+    def _on_voice_hotkey(self, _event: object) -> str:
+        self.start_listen_once()
+        return "break"
+
     def _on_mousewheel(self, event: tk.Event[tk.Misc]) -> str:
         self.transcript_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         return "break"
@@ -2471,7 +2519,7 @@ class NovaAIGui:
     def _handle_gui_command(self, command: str) -> None:
         lowered = command.strip().lower()
 
-        if lowered == "/listen":
+        if lowered in {"/listen", "/ask", "/voiceask"}:
             self.start_listen_once()
             return
 
@@ -2499,6 +2547,10 @@ class NovaAIGui:
 
         if lowered == "/recalibrate":
             self.start_recalibration()
+            return
+
+        if lowered == "/web" or lowered.startswith("/web "):
+            self._handle_web_command(command)
             return
 
         if lowered == "/profile":
@@ -2540,12 +2592,89 @@ class NovaAIGui:
 
         if lowered == "/help":
             self._append_system_message(
-                "GUI commands: /listen, /performance, /reset, /voice, /mode voice, /mode text, /recalibrate, /profile, /profiles, /profile use <id>."
+                "GUI commands: /listen, /ask, /performance, /reset, /voice, /mode voice, "
+                "/mode text, /recalibrate, /web, /web on, /web off, /web auto on, "
+                "/web auto off, /web clear, /web <query>, /profile, /profiles, "
+                "/profile use <id>. Hotkey: F8 triggers Voice Ask."
             )
             return
 
         self._append_system_message(
             "That slash command is not wired into the GUI yet. The full command set still lives in the CLI."
+        )
+
+    def _web_status_text(self) -> str:
+        queued_query = self.state.pending_web_query or "none"
+        queued_context = "ready" if self.state.pending_web_context else "none"
+        return (
+            "Web browsing: "
+            f"{'on' if self.config.web_browsing_enabled else 'off'} | "
+            f"Auto-search: {'on' if self.config.web_auto_search else 'off'} | "
+            f"Max results: {self.config.web_max_results} | "
+            f"Timeout: {self.config.web_timeout_seconds}s | "
+            f"Region: {self.config.web_region} | "
+            f"SafeSearch: {self.config.web_safesearch} | "
+            f"Queued query: {queued_query} | "
+            f"Queued context: {queued_context}"
+        )
+
+    def _handle_web_command(self, command: str) -> None:
+        lowered = command.strip().lower()
+        if lowered == "/web":
+            self._append_system_message(self._web_status_text())
+            return
+
+        argument = command.strip()[4:].strip()
+        if not argument:
+            self._append_system_message(self._web_status_text())
+            return
+
+        lowered_argument = argument.lower()
+
+        if lowered_argument in {"on", "off"}:
+            self.config.web_browsing_enabled = lowered_argument == "on"
+            if not self.config.web_browsing_enabled:
+                self.state.pending_web_query = None
+                self.state.pending_web_context = None
+            self._append_system_message(
+                f"Web browsing is now {'on' if self.config.web_browsing_enabled else 'off'}."
+            )
+            return
+
+        if lowered_argument in {"clear", "reset"}:
+            self.state.pending_web_query = None
+            self.state.pending_web_context = None
+            self._append_system_message("Cleared queued web context.")
+            return
+
+        if lowered_argument == "auto":
+            self._append_system_message(
+                f"Web auto-search is {'on' if self.config.web_auto_search else 'off'}."
+            )
+            return
+
+        if lowered_argument.startswith("auto "):
+            toggle = lowered_argument[5:].strip()
+            if toggle in {"on", "true", "1", "yes"}:
+                self.config.web_auto_search = True
+            elif toggle in {"off", "false", "0", "no"}:
+                self.config.web_auto_search = False
+            else:
+                self._append_system_message("Use /web auto on or /web auto off.")
+                return
+            self._append_system_message(
+                f"Web auto-search is now {'on' if self.config.web_auto_search else 'off'}."
+            )
+            return
+
+        if not self.config.web_browsing_enabled:
+            self._append_system_message("Web browsing is off. Run /web on first.")
+            return
+
+        self.state.pending_web_query = argument
+        self.state.pending_web_context = None
+        self._append_system_message(
+            f"Queued web search for the next reply: {argument}"
         )
 
     def start_listen_once(self) -> None:
@@ -2621,7 +2750,47 @@ class NovaAIGui:
         )
         self._safe_ui(lambda: self._set_status_text("Thinking through your message..."))
 
-        reply = request_reply(user_text, self.profile, self.config)
+        web_context: str | None = None
+        web_note: str | None = None
+        if self.config.web_browsing_enabled:
+            web_query = self.state.pending_web_query
+            if self.state.pending_web_context:
+                web_context = self.state.pending_web_context
+                self.state.pending_web_context = None
+                self.state.pending_web_query = None
+                if web_query:
+                    web_note = f"Using queued web results for: {web_query}"
+            else:
+                if not web_query:
+                    inferred_query = extract_web_query_from_request(user_text)
+                    if inferred_query:
+                        web_query = inferred_query
+                        web_note = f"Interpreted your request as lookup: {web_query}"
+                if not web_query and self.config.web_auto_search and should_auto_search(user_text):
+                    web_query = user_text
+                if web_query:
+                    try:
+                        bundle = fetch_web_context(web_query, self.config)
+                    except RuntimeError as exc:
+                        web_note = f"Web search skipped: {exc}"
+                    else:
+                        web_context = bundle.context
+                        web_note = (
+                            f"Web search found {bundle.result_count} results for: "
+                            f"{bundle.query}"
+                        )
+                    finally:
+                        self.state.pending_web_query = None
+
+        if web_note:
+            self._safe_ui(lambda message=web_note: self._append_system_message(message))
+
+        reply = request_reply(
+            user_text,
+            self.profile,
+            self.config,
+            web_context=web_context,
+        )
         append_history("user", user_text)
         append_history("assistant", reply)
 
