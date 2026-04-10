@@ -1418,7 +1418,7 @@ class NovaAIGui:
 
             next_status = self._perform_reply_pipeline(user_text, from_voice=True)
         except Exception as exc:
-            next_status = f"Microphone error: {exc}"
+            next_status = f"Audio error: {exc}"
             self._safe_ui(lambda: self._append_system_message(next_status))
         finally:
             self._safe_ui(lambda: self._finish_task(next_status))

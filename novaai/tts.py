@@ -168,6 +168,67 @@ def describe_selected_speaker(config: Config) -> str:
     return f"#{device_info['index']} ({device_info['name']})"
 
 
+def get_output_playback_sample_rate(
+    output_device_index: int | None,
+    fallback_sample_rate: int,
+) -> int:
+    try:
+        device_info = resolve_output_device_info(output_device_index)
+    except RuntimeError:
+        return fallback_sample_rate
+    return max(8000, int(device_info["default_sample_rate"]))
+
+
+def resample_audio_for_output(
+    audio: np.ndarray,
+    source_sample_rate: int,
+    target_sample_rate: int,
+) -> np.ndarray:
+    audio_array = np.asarray(audio, dtype=np.float32)
+    if audio_array.size == 0 or source_sample_rate == target_sample_rate:
+        return np.ascontiguousarray(audio_array, dtype=np.float32)
+
+    squeeze_output = False
+    if audio_array.ndim == 1:
+        audio_array = audio_array.reshape(-1, 1)
+        squeeze_output = True
+
+    source_length = audio_array.shape[0]
+    if source_length == 1:
+        repeated = np.repeat(
+            audio_array,
+            max(1, int(round(target_sample_rate / source_sample_rate))),
+            axis=0,
+        )
+        return repeated.reshape(-1) if squeeze_output else repeated
+
+    target_length = max(
+        1,
+        int(round(source_length * float(target_sample_rate) / float(source_sample_rate))),
+    )
+    source_positions = np.arange(source_length, dtype=np.float32)
+    target_positions = np.linspace(
+        0,
+        source_length - 1,
+        num=target_length,
+        dtype=np.float32,
+    )
+
+    channels: list[np.ndarray] = []
+    for channel_index in range(audio_array.shape[1]):
+        channel = np.interp(
+            target_positions,
+            source_positions,
+            audio_array[:, channel_index],
+        ).astype(np.float32)
+        channels.append(channel)
+
+    resampled = np.stack(channels, axis=1)
+    if squeeze_output:
+        return np.ascontiguousarray(resampled.reshape(-1), dtype=np.float32)
+    return np.ascontiguousarray(resampled, dtype=np.float32)
+
+
 def ensure_xtts_model(config: Config, state: SessionState) -> TTS:
     desired_device = get_xtts_device(config)
     if state.xtts_model is None or state.xtts_device != desired_device:
@@ -461,6 +522,10 @@ def stream_xtts_audio(
     output_path: Path,
 ) -> Path:
     sample_rate = get_xtts_output_sample_rate(model)
+    playback_sample_rate = get_output_playback_sample_rate(
+        config.speaker_device_index,
+        sample_rate,
+    )
     audio_chunks: list[np.ndarray] = []
     chunk_queue: queue.SimpleQueue[object] = queue.SimpleQueue()
     producer_errors: list[Exception] = []
@@ -486,7 +551,7 @@ def stream_xtts_audio(
         buffered_samples += chunk_or_end.size
 
     audio_stream = sd.OutputStream(
-        samplerate=sample_rate,
+        samplerate=playback_sample_rate,
         channels=1,
         dtype="float32",
         blocksize=2048,
@@ -512,8 +577,13 @@ def stream_xtts_audio(
                 audio_chunk = chunk_or_end
 
             audio_chunks.append(audio_chunk)
+            playback_chunk = resample_audio_for_output(
+                audio_chunk,
+                sample_rate,
+                playback_sample_rate,
+            )
             audio_stream.write(
-                np.ascontiguousarray(audio_chunk.reshape(-1, 1), dtype=np.float32)
+                np.ascontiguousarray(playback_chunk.reshape(-1, 1), dtype=np.float32)
             )
     finally:
         try:
@@ -567,8 +637,23 @@ def play_wav_with_sounddevice(
     else:
         audio = audio.reshape(-1, 1)
 
+    playback_sample_rate = get_output_playback_sample_rate(
+        output_device_index,
+        sample_rate,
+    )
+    playback_audio = resample_audio_for_output(
+        audio,
+        sample_rate,
+        playback_sample_rate,
+    )
+
     try:
-        sd.play(audio, samplerate=sample_rate, device=output_device_index, blocking=True)
+        sd.play(
+            playback_audio,
+            samplerate=playback_sample_rate,
+            device=output_device_index,
+            blocking=True,
+        )
     except Exception as exc:
         selected = (
             "the default speaker"
