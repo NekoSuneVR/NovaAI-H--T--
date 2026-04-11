@@ -20,6 +20,7 @@ class MediaPlayer:
         self._process: subprocess.Popen[bytes] | None = None
         self._current = MediaPlaybackState()
         self._paused = MediaPlaybackState()
+        self._volume = 100
 
     def _resolve_ffplay(self) -> str:
         ffplay_path = shutil.which("ffplay")
@@ -39,12 +40,14 @@ class MediaPlayer:
                 "-autoexit",
                 "-loglevel",
                 "error",
+                "-volume",
+                str(self._volume),
                 url,
             ]
             try:
                 self._process = subprocess.Popen(
                     command,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -97,6 +100,33 @@ class MediaPlayer:
             self._paused = MediaPlaybackState()
         return self.play_stream(paused.source_url, title=paused.title, kind=paused.kind)
 
+    def _send_ffplay_key(self, key: bytes) -> None:
+        if self._process is None or self._process.stdin is None:
+            return
+        try:
+            self._process.stdin.write(key + b'\n')
+            self._process.stdin.flush()
+        except Exception:
+            pass
+
+    def set_volume(self, percent: int) -> str:
+        with self._lock:
+            target = max(0, min(100, percent))
+            if self._process is None or not self._current.source_url:
+                self._volume = target
+                return f"Volume set to {self._volume}% for the next track."
+
+            difference = target - self._volume
+            if difference == 0:
+                return f"Volume already at {self._volume}% ."
+
+            step_count = abs(difference)
+            step_key = b'0' if difference > 0 else b'9'
+            for _ in range(step_count):
+                self._send_ffplay_key(step_key)
+            self._volume = target
+            return f"Volume adjusted to {self._volume}% without restarting playback."
+
     def status_text(self) -> str:
         with self._lock:
             if self._process is not None and self._current.title:
@@ -124,6 +154,10 @@ def pause_media_playback() -> str:
 
 def resume_media_playback() -> str:
     return _PLAYER.resume()
+
+
+def set_media_volume(percent: int) -> str:
+    return _PLAYER.set_volume(percent)
 
 
 def media_status_text() -> str:

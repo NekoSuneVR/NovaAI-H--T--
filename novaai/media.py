@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 import webbrowser
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from .media_player import (
     pause_media_playback,
     play_media_stream,
     resume_media_playback,
+    set_media_volume,
     stop_media_playback,
 )
 from .web_search import search_web
@@ -33,6 +35,10 @@ STOP_PATTERN = re.compile(r"^\s*(stop|stop music|stop radio|stop audio)\s*$", fl
 PAUSE_PATTERN = re.compile(r"^\s*(pause|pause music|pause radio|pause audio)\s*$", flags=re.IGNORECASE)
 RESUME_PATTERN = re.compile(r"^\s*(resume|resume music|resume radio|resume audio)\s*$", flags=re.IGNORECASE)
 STATUS_PATTERN = re.compile(r"^\s*(what is playing|what's playing|media status|music status)\s*$", flags=re.IGNORECASE)
+VOLUME_PATTERN = re.compile(
+    r"^\s*(?:set\s+)?(?:the\s+)?(?:(?:music|radio|audio)\s+)?volume\s*(?:to\s*)?(\d{1,3})\s*%?\s*$",
+    flags=re.IGNORECASE,
+)
 SOUNDCLOUD_URL_PATTERN = re.compile(r"https?://(?:www\.)?soundcloud\.com/[^\s]+", flags=re.IGNORECASE)
 IR_TITLE_PATTERN = re.compile(
     r'<h4 class="text-danger"[^>]*>(.*?)</h4>',
@@ -42,6 +48,37 @@ IR_STREAM_BLOCK_PATTERN = re.compile(
     r"var\s+stream\d+\s*=\s*\{\s*(mp3|m4a)\s*:\s*\"([^\"]+)\"",
     flags=re.IGNORECASE | re.DOTALL,
 )
+
+RADIO_QUERY_CLEAN_PATTERN = re.compile(
+    r"\b(?:play|listen|listen to|on|the|a|my|radio|station|fm|am|stream|streaming|channel)\b",
+    flags=re.IGNORECASE,
+)
+
+RADIO_GENRE_ALIASES: dict[str, str] = {
+    "bass": "bass",
+    "chill": "chill",
+    "chillout": "chill",
+    "dnb": "drum and bass",
+    "drum and bass": "drum and bass",
+    "dubstep": "dubstep",
+    "frenchcore": "frenchcore",
+    "hardstyle": "hardstyle",
+    "hardcore": "hardcore",
+    "defqon1": "hardstyle",
+    "defqon": "hardstyle",
+    "house": "house",
+    "jpop": "jpop",
+    "kpop": "kpop",
+    "lofi": "lofi",
+    "monstercat": "monstercat",
+    "pop": "pop",
+    "psytrance": "psytrance",
+    "rnb": "rnb",
+    "rap": "rap",
+    "rock": "rock",
+    "techno": "techno",
+    "trance": "trance",
+}
 
 
 @dataclass
@@ -343,6 +380,42 @@ def _score_radio_result(query: str, title: str) -> float:
     return score
 
 
+def _normalize_radio_query(query: str) -> str:
+    cleaned = RADIO_QUERY_CLEAN_PATTERN.sub(" ", query).strip()
+    return " ".join(cleaned.split())
+
+
+def _lookup_genre_query(query: str) -> str | None:
+    normalized = query.lower().strip()
+    for alias, genre in RADIO_GENRE_ALIASES.items():
+        if normalized == alias or alias in normalized:
+            return genre
+    return None
+
+
+def _find_dynamic_radio_station(query: str, random_choice: bool = False) -> RadioSearchResult | None:
+    candidates = _search_internet_radio(query)
+    if not candidates:
+        return None
+
+    genre_query = _lookup_genre_query(query)
+    if random_choice or genre_query:
+        genre = genre_query or query
+        matching = [item for item in candidates if genre.lower() in item.title.lower()]
+        if matching:
+            return random.choice(matching)
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: _score_radio_result(query, item.title),
+        reverse=True,
+    )
+    best = ranked[0]
+    if _score_radio_result(query, best.title) < 55.0:
+        return None
+    return best
+
+
 def _search_internet_radio(query: str) -> list[RadioSearchResult]:
     url = f"https://www.internet-radio.com/search/?radio={quote_plus(query)}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -381,21 +454,6 @@ def _search_internet_radio(query: str) -> list[RadioSearchResult]:
             )
         )
     return results
-
-
-def _find_dynamic_radio_station(query: str) -> RadioSearchResult | None:
-    candidates = _search_internet_radio(query)
-    if not candidates:
-        return None
-    ranked = sorted(
-        candidates,
-        key=lambda item: _score_radio_result(query, item.title),
-        reverse=True,
-    )
-    best = ranked[0]
-    if _score_radio_result(query, best.title) < 55.0:
-        return None
-    return best
 
 
 def _find_radio_station(query: str, preferred_region: str) -> dict[str, Any] | None:
@@ -512,9 +570,26 @@ def _maybe_handle_radio_request(
             return MediaActionResult(handled=False)
     else:
         station_query = RADIO_WORD_PATTERN.sub("", cleaned_request).strip() or cleaned_request
+        station_query = _normalize_radio_query(station_query)
+        if not station_query:
+            station_query = "radio"
+
         station = _find_radio_station(station_query, preferred_region)
         if station is None:
-            dynamic_station = _find_dynamic_radio_station(station_query)
+            genre_query = _lookup_genre_query(station_query)
+            random_choice = bool(
+                genre_query
+                or station_query.strip() in {"random", "shuffle", "surprise", "radio"}
+            )
+            if genre_query:
+                search_query = genre_query
+            elif station_query.strip() in {"random", "shuffle", "surprise"}:
+                search_query = "radio"
+            else:
+                search_query = station_query
+            dynamic_station = _find_dynamic_radio_station(
+                search_query, random_choice=random_choice
+            )
             if dynamic_station is None:
                 return MediaActionResult(
                     handled=True,
@@ -604,6 +679,11 @@ def handle_media_request(
         return MediaActionResult(handled=True, response=resume_media_playback())
     if STATUS_PATTERN.match(user_text):
         return MediaActionResult(handled=True, response=media_status_text())
+
+    volume_match = VOLUME_PATTERN.match(user_text)
+    if volume_match:
+        percent = int(volume_match.group(1))
+        return MediaActionResult(handled=True, response=set_media_volume(percent))
 
     if not _looks_like_media_request(user_text):
         return MediaActionResult(handled=False)
