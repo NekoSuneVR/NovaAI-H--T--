@@ -15,6 +15,7 @@ from .audio_input import (
 from .chat import request_reply
 from .config import Config
 from .models import SessionState
+from .media import handle_media_request
 from .storage import (
     append_history,
     create_profile,
@@ -249,6 +250,14 @@ class NovaAIGui:
             f"Provider: {self.config.web_search_provider} | "
             f"Max results: {self.config.web_max_results}"
         )
+        print(
+            f"[NovaAI GUI] Media region: {self.config.media_region} | "
+            f"Default music: {self.config.music_provider_default}"
+        )
+        if self.config.music_provider_default == "soundcloud":
+            print(
+                f"[NovaAI GUI] SoundCloud stream endpoint: {self.config.soundcloud_stream_endpoint}"
+            )
         print()
 
     def _build_ui_legacy(self) -> None:
@@ -2482,6 +2491,26 @@ class NovaAIGui:
         self.root.update_idletasks()
         self.transcript_canvas.yview_moveto(1.0)
 
+    def send_text_from_command(self, text: str) -> None:
+        if not self.session_started:
+            self._set_status_text("Press Start Session first.")
+            return
+
+        raw_text = text.strip()
+        if not raw_text:
+            return
+
+        if not self._begin_task("replying"):
+            return
+
+        self._set_status_text("Processing your request...")
+        worker = threading.Thread(
+            target=self._reply_worker,
+            args=(raw_text, False),
+            daemon=True,
+        )
+        worker.start()
+
     def send_text_message(self) -> None:
         if not self.session_started:
             self._set_status_text("Press Start Session first.")
@@ -2577,6 +2606,22 @@ class NovaAIGui:
             self._handle_web_command(command)
             return
 
+        if lowered.startswith("/play "):
+            self.send_text_from_command(f"play {command[6:].strip()}")
+            return
+
+        if lowered.startswith("/radio "):
+            self.send_text_from_command(f"play radio {command[7:].strip()}")
+            return
+
+        if lowered.startswith("/music "):
+            self.send_text_from_command(f"play {command[7:].strip()}")
+            return
+
+        if lowered in {"/pause", "/resume", "/stop"}:
+            self.send_text_from_command(lowered[1:])
+            return
+
         if lowered == "/profile":
             self._append_system_message(
                 json.dumps(self.profile, indent=2, ensure_ascii=False)
@@ -2618,7 +2663,7 @@ class NovaAIGui:
             self._append_system_message(
                 "GUI commands: /listen, /ask, /performance, /reset, /voice, /tts, /tts xtts, /tts gtts, /mode voice, "
                 "/mode text, /recalibrate, /web, /web on, /web off, /web auto on, "
-                "/web auto off, /web clear, /web <query>, /profile, /profiles, "
+                "/web auto off, /web clear, /web <query>, /play <query>, /radio <station>, /music <query>, /pause, /resume, /stop, /profile, /profiles, "
                 "/profile use <id>. Hotkey: F8 triggers Voice Ask."
             )
             return
@@ -2774,6 +2819,20 @@ class NovaAIGui:
             lambda: self._append_message(self.profile["user_name"], user_text, "user")
         )
         self._safe_ui(lambda: self._set_status_text("Thinking through your message..."))
+
+        media_action = handle_media_request(user_text, self.profile, self.config)
+        if media_action.handled:
+            self.profile = save_profile_by_id(self.active_profile_id, self.profile)
+            append_history("user", user_text)
+            append_history("assistant", media_action.response)
+            self._safe_ui(
+                lambda: self._append_message(
+                    self.profile["companion_name"],
+                    media_action.response,
+                    "assistant",
+                )
+            )
+            return "Media request handled."
 
         web_context: str | None = None
         web_note: str | None = None

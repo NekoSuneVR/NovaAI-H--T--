@@ -15,6 +15,7 @@ from .chat import request_reply
 from .config import Config, normalize_tts_provider, parse_input_mode
 from .defaults import VOICE_COMMAND_ALIASES
 from .models import CommandResult, SessionState, UserTurn
+from .media import handle_media_request
 from .storage import (
     append_history,
     ensure_runtime_dirs,
@@ -75,6 +76,12 @@ def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) 
         f"Max results: {config.web_max_results}"
     )
     print(
+        f"Media region: {config.media_region} | "
+        f"Default music: {config.music_provider_default}"
+    )
+    if config.music_provider_default == "soundcloud":
+        print(f"SoundCloud stream endpoint: {config.soundcloud_stream_endpoint}")
+    print(
         f"Performance: {config.performance_profile} | "
         f"Auto-tune: {'on' if config.auto_tune_performance else 'off'} "
         f"({config.auto_tune_goal})"
@@ -87,7 +94,7 @@ def print_welcome(profile: dict[str, Any], config: Config, state: SessionState) 
     print(
         "Commands: /help, /mode <voice|text>, /listen, /ask, /recalibrate, /mics, "
         "/mic <index|default>, /tts [xtts|gtts], /speakers, /speaker <name>, /voice [on|off], "
-        "/web [on|off|auto on|auto off|clear|<query>], "
+        "/web [on|off|auto on|auto off|clear|<query>], /play <query>, /radio <station>, /music <query>, /pause, /resume, /stop, "
         "/performance, /profiles, /profile, /profile use <id>, "
         "/name <new name>, /me <your name>, /remember <fact>, "
         "/reset, /exit"
@@ -124,6 +131,12 @@ def print_help() -> None:
     print("/web auto off           Disable auto web search")
     print("/web clear              Clear queued web context")
     print("/web <query>            Search now and use results on the next reply")
+    print("/play <query>           Play radio or open music on the preferred platform")
+    print("/radio <station>        Play a radio station using your preferred region")
+    print("/music <query>          Search the default music platform")
+    print("/pause                  Pause current media playback")
+    print("/resume                 Resume paused media playback")
+    print("/stop                   Stop current media playback")
     print("/performance            Show the auto-tuned performance profile")
     print("/profiles               List saved profiles")
     print("/profile                Show the current saved profile")
@@ -433,6 +446,33 @@ def handle_command(
             print(f"[Web] {exc}")
         return CommandResult(handled=True)
 
+    if lowered.startswith("/play "):
+        action = handle_media_request(f"play {command[6:].strip()}", profile, config)
+        if action.handled:
+            save_profile(profile)
+            print(action.response)
+        return CommandResult(handled=True)
+
+    if lowered.startswith("/radio "):
+        action = handle_media_request(f"play radio {command[7:].strip()}", profile, config)
+        if action.handled:
+            save_profile(profile)
+            print(action.response)
+        return CommandResult(handled=True)
+
+    if lowered.startswith("/music "):
+        action = handle_media_request(f"play {command[7:].strip()}", profile, config)
+        if action.handled:
+            save_profile(profile)
+            print(action.response)
+        return CommandResult(handled=True)
+
+    if lowered in {"/pause", "/resume", "/stop"}:
+        action = handle_media_request(lowered[1:], profile, config)
+        if action.handled:
+            print(action.response)
+        return CommandResult(handled=True)
+
     if lowered == "/profile":
         print()
         print(json.dumps(profile, indent=2, ensure_ascii=False))
@@ -603,6 +643,23 @@ def main() -> None:
             break
 
         if not user_text:
+            continue
+
+        try:
+            media_action = handle_media_request(user_text, profile, config)
+        except RuntimeError as exc:
+            print()
+            print(f"[Media] {exc}")
+            print()
+            continue
+
+        if media_action.handled:
+            save_profile(profile)
+            append_history("user", user_text)
+            append_history("assistant", media_action.response)
+            print()
+            print(console_safe_text(f"{profile['companion_name']}: {media_action.response}"))
+            print()
             continue
 
         web_context: str | None = None

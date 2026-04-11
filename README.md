@@ -9,6 +9,13 @@ It can listen through your microphone, reply in text, speak back with streamed a
 - Optional web browsing support (manual `/web <query>` or auto-search mode)
   - Web lookups now include short excerpts pulled from top result pages for more grounded answers.
   - Search backend is switchable between `searxng` and `duckduckgo`.
+- Media shortcuts for radio stations and music platform search
+  - Plain requests like `play Capital FM` or `play synthwave on SoundCloud` are intercepted directly.
+  - Supported radio streams play directly in-app through `ffplay` when a direct station stream is available.
+  - SoundCloud can also play directly in-app when a track URL can be resolved and a stream endpoint is configured.
+  - `pause`, `resume`, and `stop` control the current in-app media session.
+  - Built-in station matching now includes UK, US, Australia, Canada, Germany, and Japan examples.
+  - Unknown radio station requests can now fall back to `internet-radio.com` search and stream resolution.
 - Microphone input with `SpeechRecognition` and local `faster-whisper`
 - XTTS-v2 voice output with streamed playback
 - Selectable TTS backend: `xtts` (default) or `gtts`
@@ -155,6 +162,12 @@ Each profile now supports deep customization sections, including:
 - `/web auto off` disables automatic web lookups
 - `/web clear` clears any queued web context
 - `/web <query>` searches the web and applies the results to the next reply
+- `/play <query>` opens a radio station or music search
+- `/radio <station>` opens a known station using the selected/default region
+- `/music <query>` searches the default music platform
+- `/pause` pauses current in-app media playback
+- `/resume` resumes paused in-app media playback
+- `/stop` stops current in-app media playback
 - `/performance` shows the detected hardware and active performance profile
 - `/profile` shows the saved companion profile
 - `/profiles` lists available saved profiles
@@ -189,6 +202,9 @@ Natural lookup also works for general topics like "can you search RTX 5090 price
 - `WEB_AUTO_SEARCH`: automatically search for likely web/current-event prompts
 - `WEB_SEARCH_PROVIDER`: search backend, currently `searxng` or `duckduckgo`
 - `WEB_SEARCH_URL`: optional SearXNG `/search` endpoint, defaulting to `https://searxng.nekosunevr.co.uk/`
+- `MEDIA_REGION`: preferred radio region such as `GB` or `US`
+- `MUSIC_PROVIDER_DEFAULT`: default music platform such as `soundcloud`, `spotify`, or `deezer`
+- `SOUNDCLOUD_STREAM_ENDPOINT`: endpoint used to convert a resolved SoundCloud track URL into a playable audio stream
 - `WEB_MAX_RESULTS`: number of search results to attach per lookup
 - `WEB_TIMEOUT_SECONDS`: timeout for web search requests
 - `WEB_REGION`: region code for web results (for example, `us-en`)
