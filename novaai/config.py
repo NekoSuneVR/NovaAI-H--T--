@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from dotenv import load_dotenv
 
@@ -85,6 +85,38 @@ def normalize_web_search_provider(value: str) -> str:
     return "searxng"
 
 
+def normalize_media_region(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized in {"UK", "GB", "UNITED KINGDOM", "GREAT BRITAIN"}:
+        return "GB"
+    if normalized in {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}:
+        return "US"
+    if normalized in {"AU", "AUSTRALIA"}:
+        return "AU"
+    if normalized in {"CA", "CANADA"}:
+        return "CA"
+    if normalized in {"JP", "JAPAN"}:
+        return "JP"
+    if normalized in {"DE", "GERMANY"}:
+        return "DE"
+    if normalized in {"FR", "FRANCE"}:
+        return "FR"
+    return normalized or "GB"
+
+
+def normalize_music_provider(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"soundcloud", "sc"}:
+        return "soundcloud"
+    if normalized in {"radio", "internet-radio", "internet_radio"}:
+        return "radio"
+    if normalized in {"deezer"}:
+        return "deezer"
+    if normalized in {"spotify"}:
+        return "spotify"
+    return "soundcloud"
+
+
 def normalize_tts_provider(value: str) -> str:
     normalized = value.strip().lower()
     if normalized in {"gtts", "google-tts", "google_tts", "google"}:
@@ -126,6 +158,15 @@ def resolve_web_search_url(provider: str, raw_url: str | None) -> str:
             return candidate
         return candidate
     return (raw_url or "").strip()
+
+
+def resolve_soundcloud_stream_endpoint(raw_url: str | None) -> str:
+    candidate = (raw_url or "https://dl.nekosunevr.co.uk/api/stream").strip()
+    parsed = urlparse(candidate)
+    path = parsed.path.rstrip("/")
+    if not path:
+        return candidate.rstrip("/") + "/api/stream"
+    return candidate
 
 
 def parse_input_mode(argument: str) -> str | None:
@@ -173,6 +214,9 @@ class Config:
     web_timeout_seconds: int
     web_region: str
     web_safesearch: str
+    media_region: str
+    music_provider_default: str
+    soundcloud_stream_endpoint: str
     voice_enabled: bool
     input_mode: str
     stt_provider: str
@@ -315,6 +359,16 @@ class Config:
             parse_optional_str_env("WEB_SEARCH_URL")
             or parse_optional_str_env("SEARXNG_URL"),
         )
+        media_region = normalize_media_region(
+            os.getenv("MEDIA_REGION", "GB")
+        )
+        music_provider_default = normalize_music_provider(
+            os.getenv("MUSIC_PROVIDER_DEFAULT", "soundcloud")
+        )
+        soundcloud_stream_endpoint = resolve_soundcloud_stream_endpoint(
+            parse_optional_str_env("SOUNDCLOUD_STREAM_ENDPOINT")
+            or parse_optional_str_env("MEDIA_STREAM_ENDPOINT")
+        )
         tts_provider = normalize_tts_provider(os.getenv("TTS_PROVIDER", "xtts"))
 
         return cls(
@@ -382,6 +436,9 @@ class Config:
             web_safesearch=normalize_web_safesearch(
                 os.getenv("WEB_SAFESEARCH", "moderate")
             ),
+            media_region=media_region,
+            music_provider_default=music_provider_default,
+            soundcloud_stream_endpoint=soundcloud_stream_endpoint,
             voice_enabled=parse_bool_env("VOICE_ENABLED", False),
             input_mode=normalize_input_mode(os.getenv("INPUT_MODE", "voice")),
             stt_provider=normalize_stt_provider(

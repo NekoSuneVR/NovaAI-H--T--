@@ -93,6 +93,23 @@ DEFAULT_PROFILE: dict[str, Any] = {
             "inside_jokes": [],
             "projects": [],
         },
+        "media": {
+            "default_music_provider": "soundcloud",
+            "preferred_radio_region": "GB",
+            "last_radio_station_id": "",
+            "last_music_query": "",
+        },
+        "avatar": {
+            "enabled": False,
+            "vrm_path": "",
+            "last_loaded_vrm_path": "",
+            "websocket_url": "ws://127.0.0.1:8765",
+        },
+        "reminders": [],
+        "alarms": [],
+        "calendar": [],
+        "shopping_list": [],
+        "todo_list": [],
         "voice": {
             "speech_style": "natural and conversational",
             "delivery_notes": "Keep pace natural unless user asks faster or slower.",
