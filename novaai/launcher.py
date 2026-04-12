@@ -101,7 +101,7 @@ def main() -> None:
     ensure_windows_setup()
     maybe_apply_startup_update()
     if args.gui:
-        from .gui import main as gui_main
+        from .webgui import main as gui_main
 
         gui_main()
         return

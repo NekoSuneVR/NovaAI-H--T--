@@ -1,247 +1,202 @@
 # NovaAI
 
-NovaAI is a voice companion built around pluggable chat providers, faster-whisper, and XTTS-v2.
-It can listen through your microphone, reply in text, speak back with streamed audio, and now run in either a terminal or a desktop GUI.
+**Your brutally honest AI companion that actually talks back.**
 
-## Features
+NovaAI is a voice-powered desktop companion built with Python. It listens through your mic, thinks with local or cloud LLMs, and speaks back with a cloned voice — all wrapped in a slick dark-themed UI. Think Alexa, but with attitude and zero cloud lock-in.
 
-- Chat via Ollama or OpenAI-compatible endpoints such as OpenAI, LM Studio, and LiteLLM
-- Optional web browsing support (manual `/web <query>` or auto-search mode)
-  - Web lookups now include short excerpts pulled from top result pages for more grounded answers.
-  - Search backend is switchable between `searxng` and `duckduckgo`.
-- Media shortcuts for radio stations and music platform search
-  - Plain requests like `play Capital FM` or `play synthwave on SoundCloud` are intercepted directly.
-  - Supported radio streams play directly in-app through `ffplay` when a direct station stream is available.
-  - SoundCloud can also play directly in-app when a track URL can be resolved and a stream endpoint is configured.
-  - `pause`, `resume`, and `stop` control the current in-app media session.
-  - Built-in station matching now includes UK, US, Australia, Canada, Germany, and Japan examples.
-  - Unknown radio station requests can now fall back to `internet-radio.com` search and stream resolution.
-- Microphone input with `SpeechRecognition` and local `faster-whisper`
-- XTTS-v2 voice output with streamed playback
-- Selectable TTS backend: `xtts` (default) or `gtts`
-- Desktop GUI with left-side tabs (`Main`, `Chat`, `Profiles`, `Settings`)
-- Profile manager with create, clone, delete, activate, and advanced JSON editing
-- Startup auto-tuning based on CPU, RAM, and CUDA GPU capability
-- GitHub-backed version file plus optional startup auto-update
-- Configurable companion profiles with rich metadata, behavior rules, and memory sections
-- Windows-friendly setup with `setup.bat` that can install Python 3.11, Ollama, and the default Ollama model for you
-- Modular Python package layout so contributors can work on one area at a time
+---
+
+## What Can It Do?
+
+- **Chat** via Ollama or any OpenAI-compatible endpoint (LM Studio, LiteLLM, etc.)
+- **Listen** with `faster-whisper` local speech recognition — no audio leaves your machine
+- **Talk back** with XTTS-v2 streamed voice synthesis (or Google TTS as a lightweight fallback)
+- **Search the web** — manual lookups or auto-triggered when the LLM thinks it needs fresh info
+- **Play music & radio** — SoundCloud search, internet radio stations, in-app playback with pause/resume/stop
+- **Manage your life** — reminders, alarms, to-do lists, shopping lists, and a calendar
+- **Multiple profiles** — create, clone, and switch between different companion personalities
+- **Auto-tune performance** — detects your hardware and adjusts model sizes, GPU usage, and timeouts automatically
+- **Self-update** — checks GitHub for new versions and can update itself on startup
 
 ## Quick Start
 
-1. Run the full Windows setup:
+**One command to set everything up:**
 
 ```powershell
 .\setup.bat
 ```
 
-2. Start the GUI:
+This handles Python 3.11, Ollama, model downloads, and all dependencies. Then:
 
 ```powershell
+# Desktop GUI (recommended)
 .\launch_gui.bat
-```
 
-3. Or start the terminal version:
-
-```powershell
+# Terminal mode
 .\.venv\Scripts\python.exe app.py
 ```
 
-If Python 3.11 or Ollama are missing, `setup.bat` uses `winget` to install them first and accepts the required `winget` source/package agreements automatically. It also creates `.env`, seeds `data/profile.json`, starts Ollama, pulls the default Ollama model, and preloads the faster-whisper and XTTS model files so the first app launch is less annoying. On first app launch, NovaAI migrates to a multi-profile store at `data/profiles.json`.
+> **GPU users:** want faster voice replies? After setup, run:
+> ```powershell
+> .\.venv\Scripts\python.exe -m pip install --upgrade --index-url https://download.pytorch.org/whl/cu128 torch torchaudio torchcodec
+> ```
 
-When `AUTO_UPDATE_CHECK=true`, NovaAI compares your local `VERSION` file to the latest `VERSION` on GitHub during startup. If `AUTO_UPDATE_INSTALL=true` too, clean non-git installs update themselves automatically and then restart.
+## The GUI
 
-You can also force a manual update at any time:
+NovaAI runs as a native desktop window powered by **pywebview + Tailwind CSS** — a real web-rendered UI, not a clunky toolkit widget.
 
-```powershell
-.\update.bat
-```
+**Pages:**
 
-## Optional GPU Upgrade
+| Page | What It Does |
+|------|-------------|
+| **Dashboard** | Session controls, toggle voice/mic/hands-free, status at a glance |
+| **Chat** | Full conversation view with text + voice input |
+| **Reminders** | Set time-based reminders and recurring alarms |
+| **Calendar** | Track upcoming events with date/time |
+| **Shopping** | Checkbox-style shopping list |
+| **To-Do** | Task list with done/delete |
+| **Profiles** | Create, clone, switch, or delete companion personalities |
+| **Settings** | Audio devices, web search config, LLM/TTS/STT info |
 
-If you have an NVIDIA GPU and want faster XTTS replies, upgrade PyTorch after setup:
+Voice replies, hands-free mode, and mic mute can all be toggled **before** starting a session.
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade --index-url https://download.pytorch.org/whl/cu128 torch torchaudio torchcodec
-```
+## Terminal Commands
+
+NovaAI has a full command set for terminal mode:
+
+| Command | What It Does |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/mode voice` | Hands-free mic input |
+| `/mode text` | Switch back to typing |
+| `/listen` or `/ask` | Capture one spoken turn |
+| `/voice` | Toggle spoken replies on/off |
+| `/web <query>` | Search the web and feed results to the next reply |
+| `/web auto on/off` | Auto-search for current-event questions |
+| `/play <query>` | Play radio or search music |
+| `/radio <station>` | Tune into a known station |
+| `/music <query>` | Search your default music platform |
+| `/pause` / `/resume` / `/stop` | Media playback controls |
+| `/profile` | Show current profile |
+| `/profiles` | List all profiles |
+| `/profile use <id>` | Switch profiles |
+| `/name <new name>` | Rename the companion |
+| `/me <name>` | Set your name |
+| `/remember <fact>` | Store a memory note |
+| `/recalibrate` | Re-tune mic noise gate |
+| `/mics` / `/speakers` | List audio devices |
+| `/mic <index>` | Choose a microphone |
+| `/performance` | Show hardware info and active tuning profile |
+| `/reset` | Clear conversation history |
+| `/exit` | Quit |
+
+Natural language works too — say *"remind me to call the dentist at 3pm"* or *"play Capital FM"* and NovaAI handles it.
+
+## Profiles
+
+Each companion profile is deeply customisable:
+
+- **Identity** — name, pronouns, role, relationship style
+- **Conversation** — reply length, pacing, verbosity, formatting
+- **Personality sliders** — warmth, sass, directness, patience, playfulness, formality
+- **Boundaries** — roast intensity, avoided topics, safety overrides
+- **Memory** — likes, dislikes, personal facts, inside jokes, projects
+- **Voice** — speech style, delivery notes, persona keywords
+- **Custom rules** — hard must-follow rules and soft preferences
+
+## Data Storage
+
+All runtime data lives in a single **SQLite database** at `data/novaai.db`:
+
+- Chat history
+- Profiles and their feature data (reminders, todos, shopping, calendar, alarms)
+- App state (active profile, settings)
+
+On first run, any existing JSON files (`profiles.json`, `history.jsonl`) are automatically migrated into the database.
+
+## Configuration
+
+Copy `.env.example` to `.env` and tweak what you need. Key settings:
+
+| Setting | Default | What It Does |
+|---------|---------|-------------|
+| `LLM_PROVIDER` | `ollama` | Chat backend (`ollama` or `openai`) |
+| `LLM_MODEL` | `dolphin3` | Which model to use |
+| `TTS_PROVIDER` | `xtts` | Voice engine (`xtts` or `gtts`) |
+| `WEB_BROWSING_ENABLED` | `true` | Web search features |
+| `WEB_AUTO_SEARCH` | `false` | Auto-detect when to search |
+| `VOICE_ENABLED` | `false` | Start with voice replies on |
+| `AUTO_TUNE_PERFORMANCE` | `true` | Auto-detect hardware and tune |
+| `AUTO_UPDATE_CHECK` | `true` | Check GitHub for updates on startup |
+| `XTTS_SPEED` | `1.0` | Speaking pace multiplier |
+| `STT_MODEL` | `small.en` | Whisper model size |
+| `MIC_DEVICE_INDEX` | *(auto)* | Pin a specific microphone |
+| `SPEAKER_DEVICE_INDEX` | *(auto)* | Pin a specific speaker |
+
+See `.env.example` for the full list with descriptions.
 
 ## Project Layout
 
-```text
+```
 NovaAI/
-|-- app.py
-|-- launch_gui.bat
-|-- setup.bat
-|-- update.bat
-|-- requirements.txt
-|-- LICENSE
-|-- VERSION
-|-- .env.example
-|-- README.md
+|-- app.py                 # Entry point
+|-- setup.bat              # One-click Windows setup
+|-- launch_gui.bat         # Launch the desktop GUI
+|-- update.bat             # Manual update
+|-- requirements.txt       # Python dependencies
+|-- VERSION                # Current version
+|-- .env.example           # Configuration template
 |-- data/
+|   |-- novaai.db          # SQLite database (runtime)
 |   |-- profile.example.json
-|   |-- profiles.example.json
 |-- novaai/
-|   |-- __init__.py
-|   |-- __main__.py
-|   |-- audio_input.py
-|   |-- chat.py
-|   |-- cli.py
-|   |-- config.py
-|   |-- defaults.py
-|   |-- gui.py
-|   |-- launcher.py
-|   |-- models.py
-|   |-- performance.py
-|   |-- paths.py
-|   |-- storage.py
-|   |-- tts.py
-|   |-- updater.py
-|   |-- utils.py
+|   |-- launcher.py        # CLI vs GUI routing + auto-update
+|   |-- webgui.py          # pywebview desktop GUI backend
+|   |-- cli.py             # Terminal chat loop + commands
+|   |-- chat.py            # System prompt + LLM requests
+|   |-- config.py          # Environment parsing + runtime config
+|   |-- database.py        # SQLite schema + CRUD operations
+|   |-- storage.py         # Profile/history API (SQLite-backed)
+|   |-- features.py        # Reminders, alarms, todos, shopping, calendar
+|   |-- audio_input.py     # Mic capture + faster-whisper STT
+|   |-- tts.py             # XTTS-v2 / gTTS synthesis + playback
+|   |-- media.py           # Radio + music platform integration
+|   |-- media_player.py    # In-app audio playback (ffplay)
+|   |-- performance.py     # Hardware detection + auto-tuning
+|   |-- updater.py         # GitHub version check + self-update
+|   |-- web_search.py      # SearXNG / DuckDuckGo search
+|   |-- defaults.py        # Default profile template
+|   |-- models.py          # Shared dataclasses
+|   |-- paths.py           # Path constants
+|   |-- static/
+|       |-- index.html     # Tailwind CSS frontend
 ```
 
-## Module Guide
+## Good to Know
 
-- `novaai/config.py`: environment parsing and runtime configuration
-- `novaai/storage.py`: multi-profile store, active profile switching, and history loading/saving
-- `novaai/chat.py`: system prompt construction and provider-specific chat requests
-- `novaai/audio_input.py`: microphone capture, STT, and mic calibration
-- `novaai/tts.py`: XTTS/gTTS generation and playback handling
-- `novaai/gui.py`: desktop chat window, hands-free controls, and mic mute
-- `novaai/launcher.py`: entrypoint that chooses CLI or GUI mode
-- `novaai/performance.py`: hardware detection and startup auto-tuning
-- `novaai/updater.py`: GitHub version checks and optional self-update flow
-- `novaai/cli.py`: command handling and the main terminal loop
-
-## GUI Controls
-
-- Left tabs:
-- `Main`: session pulse + quick voice/chat actions
-- `Chat`: transcript and message composer
-- `Profiles`: create, clone, delete, activate, and edit profiles
-- `Settings`: microphone/speaker selection and refresh
-- Profile editor:
-- Basic fields: profile name, description, companion/user names, tags, style, goals, memory notes
-- Advanced mode: full profile JSON editor for deep customization
-
-## Profile JSON Shape
-
-Each profile now supports deep customization sections, including:
-
-- top-level identity and style keys (`profile_name`, `companion_name`, `companion_style`, `shared_goals`, `memory_notes`)
-- `profile_details.identity` for relationship and locale hints
-- `profile_details.conversation` for formatting, pacing, and reply-length behavior
-- `profile_details.personality_sliders` for tone calibration (warmth, sass, directness, etc.)
-- `profile_details.boundaries` for roast/safety limits
-- `profile_details.capabilities` for explicit “can do / cannot claim” contracts
-- `profile_details.memory` for structured user facts/preferences
-- `profile_details.voice` for speech delivery notes
-- `profile_details.custom_rules` for strict must-follow rules and extra notes
-
-## Commands
-
-- `/help` shows commands
-- `/mode voice` turns on hands-free microphone input
-- `/mode text` switches back to typing
-- `/listen` captures one spoken turn immediately
-- `/ask` alias for `/listen`
-- `/recalibrate` relearns room noise before listening
-- `/mics` lists available microphone devices
-- `/mic <index>` chooses a microphone
-- `/mic default` switches back to the system default microphone
-- `/tts` shows the current TTS provider
-- `/tts xtts` switches to XTTS-v2 (default)
-- `/tts gtts` switches to Google gTTS
-- `/speakers` lists built-in XTTS voices (XTTS mode only)
-- `/speaker <name>` switches XTTS voice (XTTS mode only)
-- `/voice` toggles spoken replies on and off
-- `/web` shows web browsing status
-- `/web on` enables web browsing
-- `/web off` disables web browsing
-- `/web auto on` enables automatic web lookups for likely current-event prompts
-- `/web auto off` disables automatic web lookups
-- `/web clear` clears any queued web context
-- `/web <query>` searches the web and applies the results to the next reply
-- `/play <query>` opens a radio station or music search
-- `/radio <station>` opens a known station using the selected/default region
-- `/music <query>` searches the default music platform
-- `/pause` pauses current in-app media playback
-- `/resume` resumes paused in-app media playback
-- `/stop` stops current in-app media playback
-- `/performance` shows the detected hardware and active performance profile
-- `/profile` shows the saved companion profile
-- `/profiles` lists available saved profiles
-- `/profile use <profile_id>` switches the active profile
-- `/name <new name>` renames the companion
-- `/me <your name>` saves your name
-- `/remember <fact>` stores a memory note
-- `/reset` clears conversation history
-- `/exit` quits the app
-
-In the GUI `Chat` tab, you can also click `Voice Ask` (or press `F8`) to capture a spoken prompt.
-With web browsing enabled, natural requests like "Hey, can you check the weather for me?" will auto-trigger a web lookup even if `/web auto` is off.
-Natural lookup also works for general topics like "can you search RTX 5090 price?" or "look up the latest Unreal Engine news."
-
-## Configuration Highlights
-
-- `AUTO_TUNE_PERFORMANCE`: enable or disable startup auto-tuning
-- `AUTO_TUNE_GOAL`: choose `speed`, `balanced`, or `quality`
-- `AUTO_UPDATE_CHECK`: check the GitHub `VERSION` file on startup
-- `AUTO_UPDATE_INSTALL`: auto-install GitHub updates when the local copy is behind
-- `AUTO_UPDATE_CACHE_SECONDS`: reuse the last update check result for this many seconds
-- `HF_HUB_DISABLE_SYMLINKS_WARNING`: suppress the Windows symlink cache warning from Hugging Face
-- `NOVA_GITHUB_REPO`: override the GitHub repo slug used for update checks
-- `NOVA_GITHUB_BRANCH`: override the GitHub branch used for update checks
-- `LLM_PROVIDER`: `ollama` or `openai` (`openai` also covers OpenAI-compatible servers like LM Studio and LiteLLM)
-- `LLM_MODEL`: chat model name
-- `LLM_API_URL`: custom chat endpoint URL; leave blank to use the provider default
-- `LLM_API_KEY`: API key for OpenAI or compatible hosted endpoints
-- `LLM_NUM_PREDICT`: reply token budget
-- `TTS_PROVIDER`: `xtts` (default) or `gtts`
-- `WEB_BROWSING_ENABLED`: enable web search features
-- `WEB_AUTO_SEARCH`: automatically search for likely web/current-event prompts
-- `WEB_SEARCH_PROVIDER`: search backend, currently `searxng` or `duckduckgo`
-- `WEB_SEARCH_URL`: optional SearXNG `/search` endpoint, defaulting to `https://searxng.nekosunevr.co.uk/`
-- `MEDIA_REGION`: preferred radio region such as `GB` or `US`
-- `MUSIC_PROVIDER_DEFAULT`: default music platform such as `soundcloud`, `spotify`, or `deezer`
-- `SOUNDCLOUD_STREAM_ENDPOINT`: endpoint used to convert a resolved SoundCloud track URL into a playable audio stream
-- `WEB_MAX_RESULTS`: number of search results to attach per lookup
-- `WEB_TIMEOUT_SECONDS`: timeout for web search requests
-- `WEB_REGION`: region code for web results (for example, `us-en`)
-- `WEB_SAFESEARCH`: web safe-search mode (`off`, `moderate`, or `strict`)
-- `VOICE_ENABLED`: whether spoken replies start enabled (default is `false`)
-- `XTTS_SPEED`: speaking pace multiplier (`1.00` is natural speed)
-- `XTTS_STREAM_OUTPUT`: stream speech while audio is generating
-- `XTTS_CHUNK_MAX_CHARS`: safe per-chunk XTTS text limit
-- `XTTS_MAX_TEXT_CHARS`: maximum total spoken text for one reply
-- `STT_USE_GPU`: manual fallback if auto-tune is disabled
-- `STT_MODEL`: faster-whisper model size, such as `small.en` or `medium.en`
-- `MIC_DEVICE_INDEX`: manually pin a microphone from `/mics`
-- `SPEAKER_DEVICE_INDEX`: pin a specific speaker/output device for playback
-
-## Notes
-
-- XTTS-v2 downloads large model files the first time it is used.
-- gTTS does not require local model downloads, but it needs internet access.
-- `faster-whisper` downloads its speech model the first time it is used.
-- `setup.bat` now preloads those model files during setup so most users should not see those downloads on first launch anymore.
-- Auto-update is conservative on purpose. If NovaAI sees a git checkout with local edits, it skips self-updating instead of risking your work.
-- The GUI mic mute is app-level, which means it stops NovaAI from starting new listens. It does not change the Windows system microphone mute state.
-- With auto-tune on, NovaAI overrides a few performance-sensitive values at startup so the app matches the current machine better.
-- Auto-tune does not change `XTTS_SPEED`, so voice pace stays consistent across different machines.
-- If you want to lock in your own values, set `AUTO_TUNE_PERFORMANCE=false` in `.env`.
-- Voice output is saved to `audio/latest_reply.wav` (XTTS) or `audio/latest_reply.mp3` (gTTS) even when playback fails.
-- Runtime data like `.env`, `data/profile.json`, `data/profiles.json`, `data/history.jsonl`, and generated audio are ignored by git.
+- **First run downloads models** — XTTS-v2 and faster-whisper grab model files on first use. `setup.bat` preloads them so you're not waiting on first launch.
+- **Mic mute is app-level** — it stops NovaAI from listening, it doesn't touch your Windows system mic settings.
+- **Auto-tune won't mess with your voice** — `XTTS_SPEED` is never overridden, so your companion sounds the same on every machine.
+- **Git-safe updates** — if NovaAI detects a git checkout with local edits, it skips self-updating to protect your work.
+- **Audio output is saved** — voice replies land in `audio/latest_reply.wav` (XTTS) or `.mp3` (gTTS) even if playback fails.
 
 ## Contributing
 
-The project is intentionally split into modules so different contributors can work in parallel without constantly editing one giant file. A good starting point is:
+The codebase is modular by design — pick an area and dive in:
 
-- voice or mic issues: `novaai/audio_input.py`
-- personality or response logic: `novaai/chat.py`
-- XTTS or playback issues: `novaai/tts.py`
-- command flow or app behavior: `novaai/cli.py`
+| Area | File |
+|------|------|
+| Voice / mic issues | `novaai/audio_input.py` |
+| Personality / responses | `novaai/chat.py` |
+| TTS / playback | `novaai/tts.py` |
+| Commands / app flow | `novaai/cli.py` |
+| GUI frontend | `novaai/static/index.html` |
+| GUI backend | `novaai/webgui.py` |
+| Features (reminders etc.) | `novaai/features.py` |
+| Data / profiles | `novaai/storage.py` + `novaai/database.py` |
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE).
+
+Built with spite, sarcasm, and way too much caffeine by [CacheNetworks](https://github.com/cachenetworks).

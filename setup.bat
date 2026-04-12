@@ -244,22 +244,34 @@ exit /b 0
 
 
 :ensure_ollama_running
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }"
-if not errorlevel 1 exit /b 0
+set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
+rem -- Quick check: is Ollama already running? (try curl first, then PowerShell)
+curl -s -f --max-time 5 http://127.0.0.1:11434/api/tags >nul 2>nul
+if not errorlevel 1 exit /b 0
+if exist "%PS_EXE%" (
+    "%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }"
+    if not errorlevel 1 exit /b 0
+)
+
+rem -- Start Ollama
 if exist "%LocalAppData%\Programs\Ollama\ollama app.exe" (
     start "" "%LocalAppData%\Programs\Ollama\ollama app.exe"
 ) else (
     start "" /MIN "%OLLAMA_EXE%" serve
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $deadline=(Get-Date).AddSeconds(60); while((Get-Date) -lt $deadline){ try { Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -Method Get -TimeoutSec 5 | Out-Null; exit 0 } catch { Start-Sleep -Milliseconds 750 } }; exit 1"
-if errorlevel 1 (
-    echo Ollama did not come online within 60 seconds.
-    exit /b 1
-)
+rem -- Wait up to 60 s for Ollama to come online
+set /a _oll_attempts=0
+:ollama_wait_loop
+timeout /t 1 /nobreak >nul
+curl -s -f --max-time 5 http://127.0.0.1:11434/api/tags >nul 2>nul
+if not errorlevel 1 exit /b 0
+set /a _oll_attempts+=1
+if %_oll_attempts% lss 60 goto ollama_wait_loop
 
-exit /b 0
+echo Ollama did not come online within 60 seconds.
+exit /b 1
 
 
 :ensure_ollama_model

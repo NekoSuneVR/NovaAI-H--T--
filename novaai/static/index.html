@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovaAI Studio</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        nova: {
+          bg:       '#0f0f14',
+          nav:      '#0a0a10',
+          surface:  '#15151e',
+          surface2: '#1c1c28',
+          surface3: '#222232',
+          border:   '#252538',
+          border2:  '#2e2e44',
+          text:     '#e8e8f2',
+          muted:    '#7070a0',
+          muted2:   '#9898c0',
+          input:    '#0c0c18',
+          accent:   '#8b5cf6',
+          accentH:  '#7c3aed',
+          accentD:  '#6d28d9',
+          accentBg: '#1a0e30',
+          accentB:  '#3d2070',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  html, body { margin:0; padding:0; background:#0f0f14; color:#e8e8f2; font-family:'Segoe UI','Inter',system-ui,sans-serif; overflow:hidden; height:100%; }
+  ::-webkit-scrollbar { width:5px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:#222232; border-radius:3px; }
+  ::-webkit-scrollbar-thumb:hover { background:#8b5cf6; }
+  .nav-item { transition: all 0.15s ease; }
+  .nav-item:hover { background:#15151e; color:#e8e8f2; }
+  .nav-item.active { background:#1a0e30; color:#c4b5fd; border-left-color:#8b5cf6; }
+  .page { display:none; }
+  .page.active { display:flex; }
+  .toggle-dot { transition: transform 0.2s ease, background 0.2s ease; }
+  .toggle-bg { transition: background 0.2s ease; }
+  .card { background:#15151e; border:1px solid #252538; border-radius:10px; }
+  .card-alt { background:#1c1c28; border:1px solid #2e2e44; border-radius:10px; }
+  .btn-primary { background:#8b5cf6; color:#fff; }
+  .btn-primary:hover { background:#7c3aed; }
+  .btn-primary:disabled { background:#1c1c28; color:#7070a0; cursor:not-allowed; }
+  .btn-secondary { background:#1c1c28; color:#9898c0; border:1px solid #2e2e44; }
+  .btn-secondary:hover { background:#222232; color:#e8e8f2; border-color:#3d2070; }
+  .btn-secondary:disabled { background:#15151e; color:#7070a0; border-color:#252538; cursor:not-allowed; }
+  .btn-danger { background:rgba(248,113,113,0.08); color:#f87171; border:1px solid rgba(127,29,29,0.5); }
+  .btn-danger:hover { background:rgba(248,113,113,0.15); }
+  .btn-success { background:rgba(34,197,94,0.08); color:#22c55e; border:1px solid rgba(20,83,45,0.5); }
+  .btn-success:hover { background:rgba(34,197,94,0.15); }
+  .chat-bubble-user { background:rgba(251,191,36,0.06); border-left:3px solid #7c5a1a; }
+  .chat-bubble-assistant { background:rgba(147,197,253,0.06); border-left:3px solid #1e4a6e; }
+  .chat-bubble-system { background:rgba(107,114,128,0.06); border-left:3px solid #1e2d4a; }
+  input, textarea, select {
+    background:#0c0c18; border:1px solid #2e2e44; border-radius:6px; padding:8px 12px;
+    color:#e8e8f2; font-size:13px; outline:none; transition: border-color 0.15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color:#8b5cf6; }
+  input:disabled, select:disabled { background:#15151e; color:#7070a0; }
+  .fade-in { animation: fadeIn 0.2s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  .notification { animation: slideIn 0.3s ease, fadeOut 0.3s ease 3.7s forwards; }
+  @keyframes slideIn { from{transform:translateX(100%);opacity:0} to{transform:translateX(0);opacity:1} }
+  @keyframes fadeOut { from{opacity:1} to{opacity:0} }
+</style>
+</head>
+<body class="flex flex-col h-screen">
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- LAYOUT -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div class="flex flex-1 overflow-hidden">
+
+  <!-- ── Sidebar ── -->
+  <nav id="sidebar" class="flex flex-col w-52 min-w-[208px] bg-nova-nav border-r border-nova-border flex-shrink-0">
+    <div class="px-5 py-4 border-b border-nova-border">
+      <div class="text-[17px] font-bold text-nova-text" id="nav-logo">NovaAI</div>
+      <div class="text-[10px] text-nova-muted tracking-wide">AI Companion Studio</div>
+    </div>
+    <div class="flex-1 py-2 overflow-y-auto">
+      <button onclick="showPage('dashboard')"  data-page="dashboard"  class="nav-item active w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#9636;</span> Dashboard</button>
+      <button onclick="showPage('chat')"        data-page="chat"        class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128172;</span> Chat</button>
+      <button onclick="showPage('reminders')"   data-page="reminders"   class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128276;</span> Reminders</button>
+      <button onclick="showPage('calendar')"    data-page="calendar"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128197;</span> Calendar</button>
+      <button onclick="showPage('shopping')"    data-page="shopping"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128722;</span> Shopping</button>
+      <button onclick="showPage('todo')"        data-page="todo"        class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#9989;</span> To-Do</button>
+      <button onclick="showPage('profiles')"    data-page="profiles"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128100;</span> Profiles</button>
+      <button onclick="showPage('settings')"    data-page="settings"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#9881;</span> Settings</button>
+    </div>
+    <div class="px-4 py-3 border-t border-nova-border">
+      <div class="text-[10px] text-nova-muted" id="nav-status">Ready</div>
+    </div>
+  </nav>
+
+  <!-- ── Main content ── -->
+  <div class="flex flex-col flex-1 overflow-hidden">
+
+    <!-- Page header -->
+    <div class="flex items-center gap-3 px-6 py-3 bg-nova-surface border-b border-nova-border min-h-[54px]">
+      <h1 id="page-title" class="text-lg font-bold">Dashboard</h1>
+      <span id="page-sub" class="text-[11px] text-nova-muted">Session controls and status</span>
+    </div>
+
+    <!-- Pages container -->
+    <div class="flex-1 overflow-hidden relative">
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Dashboard -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-dashboard" class="page active flex-col h-full overflow-y-auto p-6 gap-5">
+
+        <!-- Stat cards -->
+        <div class="grid grid-cols-4 gap-3">
+          <div class="card p-4">
+            <div id="d-stat-session" class="text-xl font-bold text-nova-muted2">Standby</div>
+            <div class="text-[10px] text-nova-muted font-medium tracking-wider uppercase mt-0.5">Session</div>
+          </div>
+          <div class="card p-4">
+            <div id="d-stat-model" class="text-xl font-bold text-nova-text truncate">--</div>
+            <div class="text-[10px] text-nova-muted font-medium tracking-wider uppercase mt-0.5">Model</div>
+          </div>
+          <div class="card p-4">
+            <div id="d-stat-mode" class="text-xl font-bold text-nova-text">Text</div>
+            <div class="text-[10px] text-nova-muted font-medium tracking-wider uppercase mt-0.5">Input Mode</div>
+          </div>
+          <div class="card p-4">
+            <div id="d-stat-status" class="text-sm font-semibold text-nova-text truncate">Ready</div>
+            <div class="text-[10px] text-nova-muted font-medium tracking-wider uppercase mt-0.5">Status</div>
+          </div>
+        </div>
+
+        <!-- Session button -->
+        <button id="d-btn-session" onclick="doStartSession()" class="w-full py-3.5 rounded-lg font-bold text-sm tracking-wide btn-primary transition-all">
+          Start Session
+        </button>
+
+        <!-- Two columns: controls + actions -->
+        <div class="grid grid-cols-5 gap-4 flex-1 min-h-0">
+
+          <!-- Controls (left 3 cols) -->
+          <div class="col-span-3 card overflow-hidden flex flex-col">
+            <div class="px-5 pt-4 pb-2 text-[13px] font-bold text-nova-text">Controls</div>
+            <div class="flex-1 divide-y divide-nova-border">
+              <!-- Voice -->
+              <div class="flex items-center gap-4 px-5 py-3">
+                <div id="d-dot-voice" class="w-2.5 h-2.5 rounded-full bg-nova-muted flex-shrink-0"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium text-nova-text">Voice Replies</div>
+                  <div class="text-[11px] text-nova-muted">Spoken TTS output</div>
+                </div>
+                <span id="d-val-voice" class="text-[12px] font-semibold text-nova-muted w-10 text-right">OFF</span>
+                <button onclick="doToggle('voice')" class="btn-secondary text-[11px] px-3 py-1.5 rounded-md font-medium">Toggle</button>
+              </div>
+              <!-- Hands-Free -->
+              <div class="flex items-center gap-4 px-5 py-3">
+                <div id="d-dot-hf" class="w-2.5 h-2.5 rounded-full bg-nova-muted flex-shrink-0"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium text-nova-text">Hands-Free</div>
+                  <div class="text-[11px] text-nova-muted">Auto-listen after each reply</div>
+                </div>
+                <span id="d-val-hf" class="text-[12px] font-semibold text-nova-muted w-10 text-right">OFF</span>
+                <button onclick="doToggle('handsfree')" class="btn-secondary text-[11px] px-3 py-1.5 rounded-md font-medium">Toggle</button>
+              </div>
+              <!-- Mic -->
+              <div class="flex items-center gap-4 px-5 py-3">
+                <div id="d-dot-mic" class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium text-nova-text">Microphone</div>
+                  <div class="text-[11px] text-nova-muted">App-level mic control</div>
+                </div>
+                <span id="d-val-mic" class="text-[12px] font-semibold text-emerald-400 w-12 text-right">LIVE</span>
+                <button onclick="doToggle('mic')" class="btn-secondary text-[11px] px-3 py-1.5 rounded-md font-medium">Toggle</button>
+              </div>
+              <!-- Web Search -->
+              <div class="flex items-center gap-4 px-5 py-3">
+                <div id="d-dot-web" class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0"></div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium text-nova-text">Web Search</div>
+                  <div class="text-[11px] text-nova-muted">Let the LLM search the web</div>
+                </div>
+                <span id="d-val-web" class="text-[12px] font-semibold text-emerald-400 w-10 text-right">ON</span>
+                <button onclick="doToggle('web_search')" class="btn-secondary text-[11px] px-3 py-1.5 rounded-md font-medium">Toggle</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick actions (right 2 cols) -->
+          <div class="col-span-2 card flex flex-col p-5 gap-2">
+            <div class="text-[13px] font-bold text-nova-text mb-1">Quick Actions</div>
+            <button id="d-btn-listen" onclick="doListen()" class="btn-secondary rounded-lg py-2.5 text-[12px] font-medium w-full" disabled>Listen Now</button>
+            <button onclick="doRecalibrate()" class="btn-secondary rounded-lg py-2.5 text-[12px] font-medium w-full">Recalibrate Mic</button>
+            <button onclick="doClearHistory()" class="btn-secondary rounded-lg py-2.5 text-[12px] font-medium w-full">Clear History</button>
+            <button onclick="doPerformance()" class="btn-secondary rounded-lg py-2.5 text-[12px] font-medium w-full">Performance Info</button>
+          </div>
+        </div>
+
+        <!-- Companion info -->
+        <div class="card px-5 py-3 flex items-center gap-4">
+          <div id="d-companion" class="text-sm font-semibold text-nova-text flex-shrink-0">NovaAI</div>
+          <div id="d-description" class="text-[12px] text-nova-muted truncate">--</div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Chat -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-chat" class="page flex-col h-full">
+        <div id="chat-log" class="flex-1 overflow-y-auto p-4 space-y-2"></div>
+        <div class="flex gap-2 p-4 border-t border-nova-border bg-nova-surface">
+          <input id="chat-input" type="text" placeholder="Type a message..." class="flex-1" onkeydown="if(event.key==='Enter')doSend()" />
+          <button id="chat-send-btn" onclick="doSend()" class="btn-primary px-5 py-2 rounded-lg text-[13px] font-semibold">Send</button>
+          <button id="chat-listen-btn" onclick="doListenFromChat()" class="btn-secondary px-4 py-2 rounded-lg text-[13px] font-semibold" title="Voice input (F8)">Mic</button>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Reminders -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-reminders" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <!-- Add form -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Add Reminder</div>
+          <div class="flex gap-2">
+            <input id="rem-text" type="text" placeholder="Reminder text..." class="flex-1" />
+            <input id="rem-time" type="text" placeholder="e.g. in 30 minutes, tomorrow 9am" class="w-56" />
+            <button onclick="doAddReminder()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Add</button>
+          </div>
+        </div>
+        <!-- List -->
+        <div class="card p-5 flex-1">
+          <div class="text-[13px] font-bold mb-3">Active Reminders</div>
+          <div id="rem-list" class="space-y-2 text-[13px]"><span class="text-nova-muted">No reminders.</span></div>
+        </div>
+
+        <!-- Alarms -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Add Alarm</div>
+          <div class="flex gap-2">
+            <input id="alarm-time" type="text" placeholder="e.g. 7:30am, 14:00" class="w-48" />
+            <input id="alarm-label" type="text" placeholder="Label (optional)" class="flex-1" />
+            <button onclick="doAddAlarm()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Add</button>
+          </div>
+        </div>
+        <div class="card p-5 flex-1">
+          <div class="text-[13px] font-bold mb-3">Active Alarms</div>
+          <div id="alarm-list" class="space-y-2 text-[13px]"><span class="text-nova-muted">No alarms.</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Calendar -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-calendar" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Add Event</div>
+          <div class="flex gap-2">
+            <input id="cal-title" type="text" placeholder="Event title..." class="flex-1" />
+            <input id="cal-date" type="date" class="w-40" />
+            <input id="cal-time" type="time" class="w-32" />
+            <button onclick="doAddCalendar()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Add</button>
+          </div>
+        </div>
+        <div class="card p-5 flex-1">
+          <div class="text-[13px] font-bold mb-3">Events</div>
+          <div id="cal-list" class="space-y-2 text-[13px]"><span class="text-nova-muted">No events.</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Shopping -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-shopping" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Add Item</div>
+          <div class="flex gap-2">
+            <input id="shop-text" type="text" placeholder="Item name..." class="flex-1" onkeydown="if(event.key==='Enter')doAddShopping()" />
+            <button onclick="doAddShopping()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Add</button>
+          </div>
+        </div>
+        <div class="card p-5 flex-1">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[13px] font-bold">Shopping List</div>
+            <div class="flex gap-2">
+              <button onclick="doClearShoppingDone()" class="btn-secondary px-3 py-1 rounded text-[11px]">Clear Done</button>
+              <button onclick="doClearShoppingAll()" class="btn-danger px-3 py-1 rounded text-[11px]">Clear All</button>
+            </div>
+          </div>
+          <div id="shop-list" class="space-y-1.5 text-[13px]"><span class="text-nova-muted">No items.</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: To-Do -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-todo" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Add Task</div>
+          <div class="flex gap-2">
+            <input id="todo-text" type="text" placeholder="Task description..." class="flex-1" onkeydown="if(event.key==='Enter')doAddTodo()" />
+            <button onclick="doAddTodo()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Add</button>
+          </div>
+        </div>
+        <div class="card p-5 flex-1">
+          <div class="text-[13px] font-bold mb-3">Tasks</div>
+          <div id="todo-list" class="space-y-1.5 text-[13px]"><span class="text-nova-muted">No tasks.</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Profiles -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-profiles" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Create Profile</div>
+          <div class="flex gap-2">
+            <input id="prof-name" type="text" placeholder="Profile name..." class="flex-1" />
+            <button onclick="doCreateProfile()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Create</button>
+          </div>
+        </div>
+        <div class="card p-5 flex-1">
+          <div class="text-[13px] font-bold mb-3">Profiles</div>
+          <div id="prof-list" class="space-y-2 text-[13px]"><span class="text-nova-muted">Loading...</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Settings -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-settings" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+
+        <!-- Voice & Input -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-4">Voice & Input</div>
+          <div class="space-y-3">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="set-voice" onchange="doToggle('voice')" class="w-4 h-4 rounded accent-violet-500" />
+              <span class="text-[13px]">Voice replies (TTS spoken output)</span>
+            </label>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="set-hf" onchange="doToggle('handsfree')" class="w-4 h-4 rounded accent-violet-500" />
+              <span class="text-[13px]">Hands-free mode (auto-listen after reply)</span>
+            </label>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="set-mic-mute" onchange="doToggle('mic')" class="w-4 h-4 rounded accent-violet-500" />
+              <span class="text-[13px]">Mic muted (block new captures)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Audio Devices -->
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div class="text-[13px] font-bold">Audio Devices</div>
+            <button onclick="doRefreshAudio()" class="btn-secondary px-3 py-1 rounded text-[11px]">Refresh</button>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <div class="text-[11px] text-nova-muted mb-1">Microphone</div>
+              <select id="set-mic-select" class="w-full"><option value="">System default</option></select>
+            </div>
+            <div>
+              <div class="text-[11px] text-nova-muted mb-1">Speaker / Output</div>
+              <select id="set-spk-select" class="w-full"><option value="">System default</option></select>
+            </div>
+            <button onclick="doApplyAudio()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Apply Audio Devices</button>
+          </div>
+        </div>
+
+        <!-- Web Search -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-4">Web Search</div>
+          <div class="space-y-3">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="set-web" onchange="doToggle('web_search')" class="w-4 h-4 rounded accent-violet-500" />
+              <span class="text-[13px]">Enable web browsing</span>
+            </label>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="set-autosearch" onchange="doToggleAutoSearch()" class="w-4 h-4 rounded accent-violet-500" />
+              <span class="text-[13px]">Auto-search (LLM decides when)</span>
+            </label>
+            <div class="flex gap-6 text-[12px] text-nova-muted mt-1">
+              <span>Provider: <span id="set-web-provider" class="text-nova-text">--</span></span>
+              <span>URL: <span id="set-web-url" class="text-nova-text">--</span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- LLM -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">LLM / Model</div>
+          <div class="grid grid-cols-2 gap-y-2 gap-x-6 text-[12px]">
+            <div class="text-nova-muted">Provider</div><div id="set-llm-provider" class="text-nova-text">--</div>
+            <div class="text-nova-muted">Model</div><div id="set-llm-model" class="text-nova-text">--</div>
+            <div class="text-nova-muted">Perf profile</div><div id="set-llm-perf" class="text-nova-text">--</div>
+            <div class="text-nova-muted">Hardware</div><div id="set-llm-hw" class="text-nova-text">--</div>
+          </div>
+        </div>
+
+        <!-- TTS / STT -->
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">TTS / STT</div>
+          <div class="grid grid-cols-2 gap-y-2 gap-x-6 text-[12px]">
+            <div class="text-nova-muted">TTS</div><div id="set-tts" class="text-nova-text">--</div>
+            <div class="text-nova-muted">STT</div><div id="set-stt" class="text-nova-text">--</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /pages container -->
+  </div><!-- /main content -->
+</div><!-- /layout row -->
+
+<!-- Status bar -->
+<div class="flex items-center px-4 h-7 bg-nova-surface border-t border-nova-border text-[11px] text-nova-muted2 gap-6 flex-shrink-0">
+  <span id="sb-status" class="flex-1 truncate">NovaAI ready.</span>
+  <span id="sb-session">Session: Off</span>
+  <span id="sb-voice">Voice: Off</span>
+  <span id="sb-mode">Mode: Text</span>
+</div>
+
+<!-- Notification area -->
+<div id="notif-area" class="fixed top-4 right-4 z-50 space-y-2 pointer-events-none"></div>
+
+<!-- Modal overlay -->
+<div id="modal-overlay" class="fixed inset-0 bg-black/60 z-40 hidden flex items-center justify-center">
+  <div class="card p-6 w-[480px] max-h-[80vh] overflow-y-auto" id="modal-content"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- JAVASCRIPT -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<script>
+const $ = id => document.getElementById(id);
+const api = () => window.pywebview ? window.pywebview.api : null;
+
+let STATE = {};
+let currentPage = 'dashboard';
+
+// ── Page navigation ──────────────────────────────────────────────────────
+
+const PAGE_META = {
+  dashboard: ['Dashboard', 'Session controls and status'],
+  chat:      ['Chat',      'Conversation with your companion'],
+  reminders: ['Reminders', 'Reminders and alarms'],
+  calendar:  ['Calendar',  'Upcoming events'],
+  shopping:  ['Shopping',  'Shopping list'],
+  todo:      ['To-Do',     'Task list'],
+  profiles:  ['Profiles',  'Manage companion profiles'],
+  settings:  ['Settings',  'Audio devices and configuration'],
+};
+
+function showPage(key) {
+  currentPage = key;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const el = $('page-' + key);
+  if (el) el.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(b => {
+    b.classList.toggle('active', b.dataset.page === key);
+  });
+  const [title, sub] = PAGE_META[key] || [key, ''];
+  $('page-title').textContent = title;
+  $('page-sub').textContent = sub;
+
+  // Refresh data when switching
+  if (key === 'reminders')  loadReminders();
+  if (key === 'calendar')   loadCalendar();
+  if (key === 'shopping')   loadShopping();
+  if (key === 'todo')       loadTodos();
+  if (key === 'profiles')   loadProfiles();
+  if (key === 'settings')   syncSettings();
+  if (key === 'dashboard')  syncDashboard();
+}
+
+// ── State sync ───────────────────────────────────────────────────────────
+
+function syncDashboard() {
+  const s = STATE;
+  // Stat cards
+  const sessionEl = $('d-stat-session');
+  if (s.busy) {
+    sessionEl.textContent = 'Busy';
+    sessionEl.className = 'text-xl font-bold text-amber-400';
+  } else if (s.session_started) {
+    sessionEl.textContent = 'Active';
+    sessionEl.className = 'text-xl font-bold text-emerald-400';
+  } else {
+    sessionEl.textContent = 'Standby';
+    sessionEl.className = 'text-xl font-bold text-nova-muted2';
+  }
+  $('d-stat-model').textContent = s.model || '--';
+  $('d-stat-mode').textContent = s.hands_free ? 'Voice' : 'Text';
+  $('d-companion').textContent = s.companion_name || 'NovaAI';
+  $('d-description').textContent = s.description || '';
+
+  // Session button
+  const btn = $('d-btn-session');
+  if (s.session_started) {
+    btn.textContent = 'Session Running';
+    btn.className = 'w-full py-3.5 rounded-lg font-bold text-sm tracking-wide btn-success transition-all cursor-default';
+    btn.disabled = true;
+  } else {
+    btn.textContent = 'Start Session';
+    btn.className = 'w-full py-3.5 rounded-lg font-bold text-sm tracking-wide btn-primary transition-all';
+    btn.disabled = s.busy;
+  }
+
+  // Toggle dots & values
+  setToggleUI('voice', s.voice_enabled, 'ON', 'OFF');
+  setToggleUI('hf',    s.hands_free,    'ON', 'OFF');
+  setToggleMic(s.mic_muted);
+  setToggleUI('web',   s.web_search,    'ON', 'OFF');
+
+  // Listen button
+  $('d-btn-listen').disabled = !s.session_started || s.busy || s.mic_muted;
+
+  // Status bar
+  $('sb-session').textContent = 'Session: ' + (s.session_started ? 'On' : 'Off');
+  $('sb-voice').textContent   = 'Voice: '   + (s.voice_enabled ? 'On' : 'Off');
+  $('sb-mode').textContent    = 'Mode: '    + (s.hands_free ? 'Voice' : 'Text');
+
+  // Chat controls
+  const chatInput = $('chat-input');
+  const chatSend  = $('chat-send-btn');
+  const chatListen = $('chat-listen-btn');
+  if (chatInput) chatInput.disabled = !s.session_started || s.busy;
+  if (chatSend)  chatSend.disabled  = !s.session_started || s.busy;
+  if (chatListen) chatListen.disabled = !s.session_started || s.busy || s.mic_muted;
+}
+
+function setToggleUI(key, on, onLabel, offLabel) {
+  const dot = $('d-dot-' + key);
+  const val = $('d-val-' + key);
+  if (dot) {
+    dot.className = 'w-2.5 h-2.5 rounded-full flex-shrink-0 ' + (on ? 'bg-emerald-500' : 'bg-nova-muted');
+  }
+  if (val) {
+    val.textContent = on ? onLabel : offLabel;
+    val.className = 'text-[12px] font-semibold w-12 text-right ' + (on ? 'text-emerald-400' : 'text-nova-muted');
+  }
+}
+
+function setToggleMic(muted) {
+  const dot = $('d-dot-mic');
+  const val = $('d-val-mic');
+  if (dot) {
+    dot.className = 'w-2.5 h-2.5 rounded-full flex-shrink-0 ' + (muted ? 'bg-red-400' : 'bg-emerald-500');
+  }
+  if (val) {
+    val.textContent = muted ? 'MUTED' : 'LIVE';
+    val.className = 'text-[12px] font-semibold w-12 text-right ' + (muted ? 'text-red-400' : 'text-emerald-400');
+  }
+}
+
+let _syncingSettings = false;
+function syncSettings() {
+  _syncingSettings = true;
+  const s = STATE;
+  $('set-voice').checked    = !!s.voice_enabled;
+  $('set-hf').checked       = !!s.hands_free;
+  $('set-mic-mute').checked = !!s.mic_muted;
+  $('set-web').checked      = !!s.web_search;
+  $('set-autosearch').checked = !!s.web_auto_search;
+  _syncingSettings = false;
+  $('set-web-provider').textContent = s.web_search_provider || '--';
+  $('set-web-url').textContent      = s.web_search_url || '--';
+  $('set-llm-provider').textContent = s.llm_provider || '--';
+  $('set-llm-model').textContent    = s.model || '--';
+  $('set-llm-perf').textContent     = s.performance_profile || '--';
+  $('set-llm-hw').textContent       = s.system_summary || '--';
+  $('set-tts').textContent          = s.tts_provider || '--';
+  $('set-stt').textContent          = (s.stt_provider || '--') + ' / ' + (s.stt_model || '--');
+}
+
+// ── Push handlers (called from Python) ───────────────────────────────────
+
+window.__onStateUpdate = function(state) {
+  STATE = state;
+  syncDashboard();
+  if (currentPage === 'settings') syncSettings();
+};
+
+window.__onChatMessage = function(msg) {
+  appendChat(msg.author, msg.text, msg.role);
+};
+
+window.__onStatusUpdate = function(msg) {
+  $('sb-status').textContent = msg;
+  $('nav-status').textContent = msg;
+  $('d-stat-status').textContent = msg;
+};
+
+window.__onNotification = function(msg) {
+  showNotification(msg);
+};
+
+window.__onFeaturesChanged = function() {
+  if (currentPage === 'reminders') loadReminders();
+  if (currentPage === 'calendar')  loadCalendar();
+  if (currentPage === 'shopping')  loadShopping();
+  if (currentPage === 'todo')      loadTodos();
+};
+
+// ── Chat ─────────────────────────────────────────────────────────────────
+
+function appendChat(author, text, role) {
+  const log = $('chat-log');
+  const div = document.createElement('div');
+  const bubbleClass = role === 'user' ? 'chat-bubble-user' : role === 'assistant' ? 'chat-bubble-assistant' : 'chat-bubble-system';
+  const authorColor = role === 'user' ? 'text-amber-400' : role === 'assistant' ? 'text-blue-300' : 'text-gray-400';
+  div.className = `${bubbleClass} rounded-lg px-4 py-3 fade-in`;
+  div.innerHTML = `<div class="${authorColor} text-[11px] font-semibold tracking-wide mb-1">${escHtml(author)}</div><div class="text-[13px] leading-relaxed text-nova-text whitespace-pre-wrap">${escHtml(text)}</div>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function doSend() {
+  const inp = $('chat-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  inp.disabled = true;
+  $('chat-send-btn').disabled = true;
+  try {
+    await api().send_message(text);
+  } catch(e) { console.error(e); }
+}
+
+async function doListenFromChat() {
+  $('chat-listen-btn').disabled = true;
+  try { await api().start_listen(); } catch(e) { console.error(e); }
+}
+
+// ── Dashboard actions ────────────────────────────────────────────────────
+
+async function doStartSession() {
+  $('d-btn-session').disabled = true;
+  try { await api().start_session(); } catch(e) { console.error(e); }
+}
+
+async function doToggle(key) {
+  if (_syncingSettings) return;
+  try {
+    if (key === 'voice')      await api().toggle_voice();
+    if (key === 'handsfree')  await api().toggle_handsfree();
+    if (key === 'mic')        await api().toggle_mic();
+    if (key === 'web_search') await api().toggle_web_search();
+  } catch(e) { console.error(e); }
+}
+
+async function doToggleAutoSearch() {
+  if (_syncingSettings) return;
+  try { await api().toggle_auto_search(); } catch(e) { console.error(e); }
+}
+
+async function doListen() {
+  $('d-btn-listen').disabled = true;
+  try { await api().start_listen(); } catch(e) { console.error(e); }
+}
+
+async function doRecalibrate() {
+  try { await api().recalibrate_mic(); } catch(e) { console.error(e); }
+}
+
+async function doClearHistory() {
+  if (!confirm('Clear all conversation history?')) return;
+  try {
+    await api().clear_history();
+    $('chat-log').innerHTML = '';
+  } catch(e) { console.error(e); }
+}
+
+async function doPerformance() {
+  try {
+    const lines = await api().get_performance_info();
+    showModal('Performance Info', '<pre class="text-[12px] text-nova-text whitespace-pre-wrap">' + escHtml(lines.join('\n')) + '</pre>');
+  } catch(e) { console.error(e); }
+}
+
+// ── Reminders ────────────────────────────────────────────────────────────
+
+async function loadReminders() {
+  try {
+    const rems = await api().get_reminders();
+    const el = $('rem-list');
+    if (!rems || !rems.length) { el.innerHTML = '<span class="text-nova-muted">No reminders.</span>'; }
+    else {
+      el.innerHTML = rems.map(r =>
+        `<div class="flex items-center justify-between py-2 px-3 rounded bg-nova-surface2 border border-nova-border">
+          <div>
+            <div class="font-medium">${escHtml(r.title || r.text || '')}</div>
+            <div class="text-[11px] text-nova-muted">${escHtml(r.due || r.time || '')}</div>
+          </div>
+          <button onclick="doDeleteReminder('${r.id}')" class="btn-danger px-2 py-1 rounded text-[11px]">Delete</button>
+        </div>`
+      ).join('');
+    }
+    const alarms = await api().get_alarms();
+    const ael = $('alarm-list');
+    if (!alarms || !alarms.length) { ael.innerHTML = '<span class="text-nova-muted">No alarms.</span>'; }
+    else {
+      ael.innerHTML = alarms.map(a =>
+        `<div class="flex items-center justify-between py-2 px-3 rounded bg-nova-surface2 border border-nova-border">
+          <div>
+            <div class="font-medium">${escHtml(a.label || 'Alarm')}</div>
+            <div class="text-[11px] text-nova-muted">${escHtml(a.time || '')} ${a.active ? '' : '(inactive)'}</div>
+          </div>
+          <button onclick="doCancelAlarm('${a.id}')" class="btn-danger px-2 py-1 rounded text-[11px]">Cancel</button>
+        </div>`
+      ).join('');
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function doAddReminder() {
+  const text = $('rem-text').value.trim();
+  const time = $('rem-time').value.trim();
+  if (!text) return;
+  try { await api().add_reminder_item(text, time || 'in 1 hour'); $('rem-text').value=''; $('rem-time').value=''; loadReminders(); } catch(e) { console.error(e); }
+}
+async function doDeleteReminder(id) { try { await api().delete_reminder_item(id); loadReminders(); } catch(e) { console.error(e); } }
+async function doAddAlarm() {
+  const time = $('alarm-time').value.trim();
+  const label = $('alarm-label').value.trim();
+  if (!time) return;
+  try { await api().add_alarm_item(time, label || 'Alarm'); $('alarm-time').value=''; $('alarm-label').value=''; loadReminders(); } catch(e) { console.error(e); }
+}
+async function doCancelAlarm(id) { try { await api().cancel_alarm_item(id); loadReminders(); } catch(e) { console.error(e); } }
+
+// ── Calendar ─────────────────────────────────────────────────────────────
+
+async function loadCalendar() {
+  try {
+    const evts = await api().get_calendar();
+    const el = $('cal-list');
+    if (!evts || !evts.length) { el.innerHTML = '<span class="text-nova-muted">No events.</span>'; return; }
+    el.innerHTML = evts.map(e =>
+      `<div class="flex items-center justify-between py-2 px-3 rounded bg-nova-surface2 border border-nova-border">
+        <div>
+          <div class="font-medium">${escHtml(e.title || '')}</div>
+          <div class="text-[11px] text-nova-muted">${escHtml(e.date || '')} ${escHtml(e.time || '')}</div>
+        </div>
+        <button onclick="doDeleteCalendar('${e.id}')" class="btn-danger px-2 py-1 rounded text-[11px]">Delete</button>
+      </div>`
+    ).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function doAddCalendar() {
+  const title = $('cal-title').value.trim();
+  const date  = $('cal-date').value;
+  const time  = $('cal-time').value;
+  if (!title) return;
+  try { await api().add_calendar(title, date, time); $('cal-title').value=''; $('cal-date').value=''; $('cal-time').value=''; loadCalendar(); } catch(e) { console.error(e); }
+}
+async function doDeleteCalendar(id) { try { await api().delete_calendar(id); loadCalendar(); } catch(e) { console.error(e); } }
+
+// ── Shopping ─────────────────────────────────────────────────────────────
+
+async function loadShopping() {
+  try {
+    const items = await api().get_shopping();
+    const el = $('shop-list');
+    if (!items || !items.length) { el.innerHTML = '<span class="text-nova-muted">No items.</span>'; return; }
+    el.innerHTML = items.map(i => {
+      const done = i.done || i.checked;
+      return `<div class="flex items-center gap-3 py-2 px-3 rounded bg-nova-surface2 border border-nova-border cursor-pointer hover:border-nova-accentB" onclick="doToggleShopping('${i.id}')">
+        <div class="w-4 h-4 rounded border ${done ? 'bg-violet-500 border-violet-500' : 'border-nova-border2'} flex items-center justify-center text-[10px]">${done ? '&#10003;' : ''}</div>
+        <span class="${done ? 'line-through text-nova-muted' : 'text-nova-text'}">${escHtml(i.text || i.name || '')}</span>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function doAddShopping() {
+  const text = $('shop-text').value.trim();
+  if (!text) return;
+  try { await api().add_shopping(text); $('shop-text').value=''; loadShopping(); } catch(e) { console.error(e); }
+}
+async function doToggleShopping(id) { try { await api().toggle_shopping(id); loadShopping(); } catch(e) { console.error(e); } }
+async function doClearShoppingDone() { try { await api().clear_shopping_completed(); loadShopping(); } catch(e) { console.error(e); } }
+async function doClearShoppingAll() {
+  if (!confirm('Remove all shopping items?')) return;
+  try { await api().clear_shopping_everything(); loadShopping(); } catch(e) { console.error(e); }
+}
+
+// ── To-Do ────────────────────────────────────────────────────────────────
+
+async function loadTodos() {
+  try {
+    const items = await api().get_todos();
+    const el = $('todo-list');
+    if (!items || !items.length) { el.innerHTML = '<span class="text-nova-muted">No tasks.</span>'; return; }
+    el.innerHTML = items.map(i => {
+      const done = i.done || i.completed;
+      return `<div class="flex items-center gap-3 py-2 px-3 rounded bg-nova-surface2 border border-nova-border">
+        <div class="w-4 h-4 rounded border ${done ? 'bg-violet-500 border-violet-500' : 'border-nova-border2'} flex items-center justify-center text-[10px] cursor-pointer" onclick="doToggleTodo('${i.id}')">${done ? '&#10003;' : ''}</div>
+        <span class="flex-1 ${done ? 'line-through text-nova-muted' : 'text-nova-text'}">${escHtml(i.text || i.title || '')}</span>
+        <button onclick="doDeleteTodo('${i.id}')" class="btn-danger px-2 py-1 rounded text-[11px]">Delete</button>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function doAddTodo() {
+  const text = $('todo-text').value.trim();
+  if (!text) return;
+  try { await api().add_todo_item(text); $('todo-text').value=''; loadTodos(); } catch(e) { console.error(e); }
+}
+async function doToggleTodo(id) { try { await api().toggle_todo_item(id); loadTodos(); } catch(e) { console.error(e); } }
+async function doDeleteTodo(id) { try { await api().delete_todo_item(id); loadTodos(); } catch(e) { console.error(e); } }
+
+// ── Profiles ─────────────────────────────────────────────────────────────
+
+async function loadProfiles() {
+  try {
+    const profs = await api().get_profiles();
+    const el = $('prof-list');
+    if (!profs || !profs.length) { el.innerHTML = '<span class="text-nova-muted">No profiles.</span>'; return; }
+    el.innerHTML = profs.map(p => {
+      const active = p.is_active;
+      return `<div class="flex items-center justify-between py-3 px-4 rounded-lg ${active ? 'bg-nova-accentBg border border-nova-accentB' : 'bg-nova-surface2 border border-nova-border'}">
+        <div>
+          <div class="font-medium ${active ? 'text-violet-300' : 'text-nova-text'}">${escHtml(p.profile_name)} ${active ? '<span class="text-[10px] text-violet-400 ml-2">ACTIVE</span>' : ''}</div>
+          <div class="text-[11px] text-nova-muted">${escHtml(p.companion_name || '')} &middot; ${escHtml(p.description || '').substring(0,60)}</div>
+        </div>
+        <div class="flex gap-2">
+          ${!active ? `<button onclick="doSwitchProfile('${p.profile_id}')" class="btn-primary px-3 py-1 rounded text-[11px]">Activate</button>` : ''}
+          <button onclick="doCloneProfile('${p.profile_id}','${escAttr(p.profile_name)}')" class="btn-secondary px-3 py-1 rounded text-[11px]">Clone</button>
+          ${!active ? `<button onclick="doDeleteProfile('${p.profile_id}')" class="btn-danger px-3 py-1 rounded text-[11px]">Delete</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+async function doCreateProfile() {
+  const name = $('prof-name').value.trim();
+  if (!name) return;
+  try { await api().create_new_profile(name); $('prof-name').value=''; loadProfiles(); } catch(e) { console.error(e); }
+}
+async function doSwitchProfile(id) { try { await api().switch_profile(id); loadProfiles(); } catch(e) { console.error(e); } }
+async function doCloneProfile(id, name) {
+  const newName = prompt('Name for the cloned profile:', name + ' (Copy)');
+  if (!newName) return;
+  try { await api().clone_profile(id, newName); loadProfiles(); } catch(e) { console.error(e); }
+}
+async function doDeleteProfile(id) {
+  if (!confirm('Delete this profile?')) return;
+  try { await api().delete_profile_item(id); loadProfiles(); } catch(e) { console.error(e); }
+}
+
+// ── Settings: audio ──────────────────────────────────────────────────────
+
+async function doRefreshAudio() {
+  try {
+    const d = await api().get_audio_devices();
+    const micSel = $('set-mic-select');
+    const spkSel = $('set-spk-select');
+    micSel.innerHTML = '<option value="">System default</option>' + (d.mics||[]).map(m => `<option value="${m.index}" ${m.index===d.current_mic?'selected':''}>${escHtml(m.name)}</option>`).join('');
+    spkSel.innerHTML = '<option value="">System default</option>' + (d.speakers||[]).map(s => `<option value="${s.index}" ${s.index===d.current_speaker?'selected':''}>${escHtml(s.name)}</option>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function doApplyAudio() {
+  const mic = $('set-mic-select').value || null;
+  const spk = $('set-spk-select').value || null;
+  try { const r = await api().apply_audio_devices(mic, spk); if (r.msg) showNotification(r.msg); } catch(e) { console.error(e); }
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────
+
+function showModal(title, bodyHtml) {
+  $('modal-content').innerHTML = `<div class="text-sm font-bold mb-4">${escHtml(title)}</div>${bodyHtml}<div class="mt-4 text-right"><button onclick="hideModal()" class="btn-secondary px-4 py-1.5 rounded-lg text-[12px]">Close</button></div>`;
+  $('modal-overlay').classList.remove('hidden');
+}
+function hideModal() { $('modal-overlay').classList.add('hidden'); }
+$('modal-overlay').addEventListener('click', e => { if (e.target === $('modal-overlay')) hideModal(); });
+
+// ── Notifications ────────────────────────────────────────────────────────
+
+function showNotification(msg) {
+  const el = document.createElement('div');
+  el.className = 'notification card px-4 py-3 text-[12px] text-nova-text pointer-events-auto shadow-lg';
+  el.textContent = msg;
+  $('notif-area').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────
+
+async function init() {
+  // Wait for pywebview API
+  let tries = 0;
+  while (!window.pywebview && tries < 100) {
+    await new Promise(r => setTimeout(r, 50));
+    tries++;
+  }
+  if (!api()) { document.body.innerHTML = '<div class="p-8 text-red-400">Failed to connect to backend.</div>'; return; }
+
+  // Load state
+  try { STATE = await api().get_state(); } catch(e) { console.error(e); }
+  syncDashboard();
+
+  // Load chat history
+  try {
+    const hist = await api().get_recent_history();
+    if (hist && hist.length) {
+      hist.forEach(m => appendChat(m.author, m.text, m.role));
+    }
+  } catch(e) { console.error(e); }
+
+  // Initial messages
+  appendChat('System', 'NovaAI is online. Press Start Session to begin.', 'system');
+  appendChat('System', 'Voice replies are off by default. Toggle them from Dashboard or Settings.', 'system');
+
+  // Keyboard shortcut: F8 = listen
+  document.addEventListener('keydown', e => {
+    if (e.key === 'F8') { e.preventDefault(); doListen(); }
+  });
+}
+
+// Start when DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
