@@ -73,9 +73,53 @@ tailwind.config = {
   .notification { animation: slideIn 0.3s ease, fadeOut 0.3s ease 3.7s forwards; }
   @keyframes slideIn { from{transform:translateX(100%);opacity:0} to{transform:translateX(0);opacity:1} }
   @keyframes fadeOut { from{opacity:1} to{opacity:0} }
+
+  /* ── Loading screen ── */
+  #loading-screen {
+    position:fixed; inset:0; z-index:9999;
+    background:#0f0f14;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transition: opacity 0.5s ease;
+  }
+  #loading-screen.fade-out { opacity:0; pointer-events:none; }
+  .loader-ring {
+    width:56px; height:56px; border-radius:50%;
+    border:3px solid #252538;
+    border-top-color:#8b5cf6;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .loader-msg {
+    animation: msgFade 0.4s ease;
+  }
+  @keyframes msgFade { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  .loader-dots::after {
+    content:'';
+    animation: dots 1.5s steps(4,end) infinite;
+  }
+  @keyframes dots {
+    0%   { content:''; }
+    25%  { content:'.'; }
+    50%  { content:'..'; }
+    75%  { content:'...'; }
+    100% { content:''; }
+  }
 </style>
 </head>
 <body class="flex flex-col h-screen">
+
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- LOADING SCREEN -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<div id="loading-screen">
+  <div class="mb-6 text-center">
+    <div class="text-3xl font-extrabold text-white tracking-tight">Nova<span class="text-violet-400">AI</span></div>
+    <div class="text-[11px] text-nova-muted tracking-widest mt-1">AI COMPANION STUDIO</div>
+  </div>
+  <div class="loader-ring mb-8"></div>
+  <div id="loader-msg" class="loader-msg text-[13px] text-nova-muted2 text-center max-w-xs px-4"></div>
+  <div class="text-[11px] text-nova-muted mt-6 loader-dots">Loading</div>
+</div>
 
 <!-- ════════════════════════════════════════════════════════════════════════ -->
 <!-- LAYOUT -->
@@ -446,6 +490,71 @@ const api = () => window.pywebview ? window.pywebview.api : null;
 
 let STATE = {};
 let currentPage = 'dashboard';
+const LOADER_START = Date.now();
+const LOADER_MIN_MS = 3000; // minimum time the loading screen is shown
+
+// ── Loading screen messages ─────────────────────────────────────────────
+
+const LOADING_MSGS = [
+  "Reticulating splines...",
+  "Teaching the AI some manners...",
+  "Convincing the hamsters to run faster...",
+  "Downloading more RAM...",
+  "Bribing the electrons to move quicker...",
+  "Asking ChatGPT for permission... just kidding",
+  "Warming up the neural networks...",
+  "Polishing the chatbot's ego...",
+  "Loading witty comebacks...",
+  "Calibrating sarcasm levels...",
+  "Untangling the internet tubes...",
+  "Negotiating with the firewall...",
+  "Feeding the machine learning hamster...",
+  "Compiling your companion's personality...",
+  "Generating artificial intelligence... naturally",
+  "Spinning up the quantum flux capacitor...",
+  "Waking up your AI companion...",
+  "Defragmenting the sass module...",
+  "Initializing existential dread... done!",
+  "Locating the any key...",
+  "Consulting the magic 8-ball...",
+  "Running on vibes and Python...",
+  "Tuning the voice to maximum charm...",
+  "Proving P != NP... nah, just loading",
+  "Almost there... probably...",
+  "Making sure the AI likes you...",
+  "Asking Siri for directions to Ollama...",
+  "Booting up the friendship engine...",
+  "One does not simply load instantly...",
+  "Whispering sweet nothings to the GPU...",
+];
+
+let _loaderInterval = null;
+(function startLoaderMessages() {
+  const el = $('loader-msg');
+  if (!el) return;
+  // Pick a random starting message
+  let idx = Math.floor(Math.random() * LOADING_MSGS.length);
+  el.textContent = LOADING_MSGS[idx];
+  _loaderInterval = setInterval(() => {
+    idx = (idx + 1) % LOADING_MSGS.length;
+    el.style.animation = 'none';
+    void el.offsetHeight; // reflow
+    el.style.animation = '';
+    el.textContent = LOADING_MSGS[idx];
+  }, 2400);
+})();
+
+function dismissLoader() {
+  const elapsed = Date.now() - LOADER_START;
+  const remaining = Math.max(0, LOADER_MIN_MS - elapsed);
+  setTimeout(() => {
+    if (_loaderInterval) { clearInterval(_loaderInterval); _loaderInterval = null; }
+    const screen = $('loading-screen');
+    if (!screen) return;
+    screen.classList.add('fade-out');
+    setTimeout(() => screen.remove(), 600);
+  }, remaining);
+}
 
 // ── Page navigation ──────────────────────────────────────────────────────
 
@@ -908,16 +1017,16 @@ function showNotification(msg) {
 // ── Init ─────────────────────────────────────────────────────────────────
 
 async function init() {
-  // Wait for pywebview API
+  // Wait for pywebview API bridge
   let tries = 0;
   while (!window.pywebview && tries < 100) {
     await new Promise(r => setTimeout(r, 50));
     tries++;
   }
-  if (!api()) { document.body.innerHTML = '<div class="p-8 text-red-400">Failed to connect to backend.</div>'; return; }
+  if (!api()) { dismissLoader(); document.body.innerHTML = '<div class="p-8 text-red-400">Failed to connect to backend.</div>'; return; }
 
-  // Load state
-  try { STATE = await api().get_state(); } catch(e) { console.error(e); }
+  // Heavy backend init (config, DB, profiles) — runs while the loading screen is shown
+  try { STATE = await api().initialize(); } catch(e) { console.error('Backend init failed:', e); }
   syncDashboard();
 
   // Load chat history
@@ -928,14 +1037,21 @@ async function init() {
     }
   } catch(e) { console.error(e); }
 
+  // Update sidebar logo with companion name
+  const logo = $('nav-logo');
+  if (logo && STATE.companion_name) logo.textContent = STATE.companion_name;
+
   // Initial messages
-  appendChat('System', 'NovaAI is online. Press Start Session to begin.', 'system');
+  appendChat('System', (STATE.companion_name || 'NovaAI') + ' is online. Press Start Session to begin.', 'system');
   appendChat('System', 'Voice replies are off by default. Toggle them from Dashboard or Settings.', 'system');
 
   // Keyboard shortcut: F8 = listen
   document.addEventListener('keydown', e => {
     if (e.key === 'F8') { e.preventDefault(); doListen(); }
   });
+
+  // Dismiss loading screen — the app is ready
+  dismissLoader();
 }
 
 // Start when DOM ready

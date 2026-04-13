@@ -86,6 +86,21 @@ class Api:
     """Python backend exposed to JavaScript via pywebview.api."""
 
     def __init__(self) -> None:
+        # Bare minimum so the window can open instantly with the loading screen.
+        # Heavy work (config, DB, profiles) is deferred to initialize().
+        self.config: Config | None = None
+        self.active_profile_id: str = ""
+        self.profile: dict = {}
+        self.state = SessionState(voice_enabled=False, input_mode="text")
+        self.session_started = False
+        self.hands_free_enabled = False
+        self.mic_muted = False
+        self.busy = False
+        self._lock = threading.Lock()
+        self._initialized = False
+
+    def initialize(self) -> dict[str, Any]:
+        """Heavy init — called from JS once the loading screen is visible."""
         ensure_runtime_dirs()
         self.config = Config.from_env()
         self.active_profile_id = get_active_profile_id()
@@ -95,11 +110,17 @@ class Api:
             input_mode=self.config.input_mode,
         )
         self.config.voice_enabled = False
-        self.session_started = False
         self.hands_free_enabled = self.config.input_mode == "voice"
-        self.mic_muted = False
-        self.busy = False
-        self._lock = threading.Lock()
+        self._initialized = True
+        # Update window title with the loaded companion name
+        global _window
+        if _window:
+            name = self.profile.get("companion_name", "NovaAI")
+            try:
+                _window.set_title(f"{name} Studio")
+            except Exception:
+                pass
+        return self.get_state()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -129,28 +150,30 @@ class Api:
     # ── state ─────────────────────────────────────────────────────────────────
 
     def get_state(self) -> dict[str, Any]:
+        cfg = self.config
         return {
             "session_started": self.session_started,
             "voice_enabled": self.state.voice_enabled,
             "hands_free": self.hands_free_enabled,
             "mic_muted": self.mic_muted,
-            "web_search": self.config.web_browsing_enabled,
-            "web_auto_search": self.config.web_auto_search,
+            "web_search": cfg.web_browsing_enabled if cfg else False,
+            "web_auto_search": cfg.web_auto_search if cfg else False,
             "busy": self.busy,
-            "model": self.config.model,
-            "llm_provider": self.config.llm_provider,
-            "performance_profile": self.config.performance_profile,
-            "system_summary": self.config.system_summary,
-            "tts_provider": self.config.tts_provider,
-            "stt_provider": self.config.stt_provider,
-            "stt_model": self.config.stt_model,
-            "web_search_provider": self.config.web_search_provider,
-            "web_search_url": self.config.web_search_url,
+            "model": cfg.model if cfg else "--",
+            "llm_provider": cfg.llm_provider if cfg else "--",
+            "performance_profile": cfg.performance_profile if cfg else "--",
+            "system_summary": cfg.system_summary if cfg else "--",
+            "tts_provider": cfg.tts_provider if cfg else "--",
+            "stt_provider": cfg.stt_provider if cfg else "--",
+            "stt_model": cfg.stt_model if cfg else "--",
+            "web_search_provider": cfg.web_search_provider if cfg else "--",
+            "web_search_url": cfg.web_search_url if cfg else "--",
             "companion_name": self.profile.get("companion_name", "NovaAI"),
             "user_name": self.profile.get("user_name", "Friend"),
             "description": self.profile.get("description", ""),
             "input_mode": "voice" if self.hands_free_enabled else "text",
             "active_profile_id": self.active_profile_id,
+            "initialized": self._initialized,
         }
 
     # ── session controls ──────────────────────────────────────────────────────
@@ -663,7 +686,7 @@ def main() -> None:
         api.start_reminder_checker()
 
     _window = webview.create_window(
-        title=f"{api.profile.get('companion_name', 'NovaAI')} Studio",
+        title="NovaAI Studio",
         url=str(html_path),
         js_api=api,
         width=1340,
