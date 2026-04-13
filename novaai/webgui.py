@@ -714,6 +714,36 @@ class Api:
         t.start()
 
 
+def _set_window_icon() -> None:
+    """Set the taskbar and title-bar icon on Windows via Win32 API."""
+    if sys.platform != "win32" or not ICON_PATH.exists():
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        LR_LOADFROMFILE = 0x0010
+
+        icon_path = str(ICON_PATH)
+        h_small = user32.LoadImageW(0, icon_path, 1, 16, 16, LR_LOADFROMFILE)
+        h_big = user32.LoadImageW(0, icon_path, 1, 32, 32, LR_LOADFROMFILE)
+
+        # Try multiple ways to find our window handle
+        hwnd = user32.FindWindowW(None, "NovaAI Studio")
+        if not hwnd:
+            hwnd = user32.GetForegroundWindow()
+        if hwnd:
+            if h_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+            if h_big:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+    except Exception:
+        pass
+
+
 def main() -> None:
     global _window
     api = Api()
@@ -721,6 +751,7 @@ def main() -> None:
 
     def _on_loaded():
         api.start_reminder_checker()
+        threading.Thread(target=_set_window_icon, daemon=True).start()
 
     _window = webview.create_window(
         title="NovaAI Studio",
@@ -733,5 +764,4 @@ def main() -> None:
         text_select=True,
     )
     _window.events.loaded += _on_loaded
-    icon = str(ICON_PATH) if ICON_PATH.exists() else None
-    webview.start(debug=False, icon=icon)
+    webview.start(debug=False)
