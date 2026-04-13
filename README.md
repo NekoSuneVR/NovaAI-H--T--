@@ -17,7 +17,7 @@ Think Alexa, but with *attitude* and zero cloud lock-in. 🔥
 
 | | Feature | Details |
 |---|---------|---------|
-| 🧠 | **LLM Chat** | Ollama, OpenAI, LM Studio, LiteLLM — your pick |
+| 🧠 | **LLM Chat** | Ollama, OpenAI, OpenRouter, LM Studio — your pick |
 | 🎙️ | **Voice Input** | Local `faster-whisper` STT — no audio leaves your machine |
 | 🔊 | **Voice Output** | XTTS-v2 streamed synthesis with cloned voices (or Google TTS lite) |
 | 🌐 | **Web Search** | Manual or auto-triggered lookups via SearXNG / DuckDuckGo |
@@ -42,7 +42,7 @@ Open PowerShell and paste:
 powershell -c "irm https://raw.githubusercontent.com/cachenetworks/NovaAI/main/install.ps1 | iex"
 ```
 
-> This interactive installer handles **everything** — Python, Ollama, model downloads, NVIDIA GPU setup, desktop shortcut — the works. Just answer a few questions and sit back.
+> This interactive installer handles **everything** — Python, LLM provider choice (Ollama, OpenAI, OpenRouter, LM Studio, or any custom endpoint), model downloads, NVIDIA GPU setup, desktop shortcut — the works. Just answer a few questions and sit back.
 
 ### 🔧 Already have the repo?
 
@@ -196,10 +196,10 @@ Copy `.env.example` to `.env` and tweak what you need:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `LLM_PROVIDER` | `ollama` | Chat backend: `ollama` or `openai` |
+| `LLM_PROVIDER` | `ollama` | Chat backend: `ollama` or `openai` (OpenAI, OpenRouter, LM Studio, and custom endpoints all use `openai`) |
 | `LLM_MODEL` / `OLLAMA_MODEL` | `dolphin3` | Which model to use |
-| `LLM_API_URL` | *(auto)* | Custom chat endpoint URL |
-| `LLM_API_KEY` | *(none)* | API key for OpenAI-compatible endpoints |
+| `LLM_API_URL` | *(auto)* | Chat endpoint URL — set automatically by the installer for your chosen provider |
+| `LLM_API_KEY` | *(none)* | API key for cloud providers (OpenAI, OpenRouter, etc.) |
 | `LLM_NUM_PREDICT` | `1200` | Reply token budget |
 | `LLM_TEMPERATURE` | `0.95` | Response creativity |
 

@@ -12,12 +12,13 @@
 
     What it does:
         1. Checks for (and optionally installs) Python 3.11+
-        2. Checks for (and optionally installs) Ollama
-        3. Clones or downloads NovaAI
-        4. Creates a virtual environment and installs dependencies
-        5. Asks about NVIDIA GPU support
-        6. Optionally creates a desktop shortcut
-        7. Launches NovaAI
+        2. Asks which LLM provider you want (Ollama, OpenAI, OpenRouter, LM Studio, custom)
+        3. Installs Ollama if needed, or configures API keys for cloud providers
+        4. Clones or downloads NovaAI
+        5. Creates a virtual environment and installs dependencies
+        6. Asks about NVIDIA GPU support
+        7. Optionally creates a desktop shortcut
+        8. Launches NovaAI
 #>
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +79,20 @@ function Ask-Choice {
     return $Default
 }
 
+function Ask-Input {
+    param([string]$Prompt, [string]$Default = "")
+    Write-Host ""
+    Write-Host "  ? " -ForegroundColor Cyan -NoNewline
+    if ($Default) {
+        Write-Host "$Prompt [default: $Default]: " -NoNewline
+    } else {
+        Write-Host "${Prompt}: " -NoNewline
+    }
+    $answer = Read-Host
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer.Trim()
+}
+
 function Has-Command { param([string]$cmd) return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
 function Has-Winget { return Has-Command "winget" }
@@ -86,6 +101,24 @@ function Refresh-Path {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath    = [Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path    = "$machinePath;$userPath"
+}
+
+function Set-EnvValue {
+    param([string]$FilePath, [string]$Key, [string]$Value)
+    if (-not (Test-Path $FilePath)) { return }
+    $lines = Get-Content $FilePath -Encoding UTF8
+    $found = $false
+    $newLines = @()
+    foreach ($line in $lines) {
+        if ($line -match "^$Key=") {
+            $newLines += "$Key=$Value"
+            $found = $true
+        } else {
+            $newLines += $line
+        }
+    }
+    if (-not $found) { $newLines += "$Key=$Value" }
+    $newLines | Set-Content $FilePath -Encoding UTF8
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
@@ -101,7 +134,7 @@ function Show-Banner {
     Write-Host " | \ | |  ___  __   ____ _| |  /   | " -ForegroundColor White -NoNewline
     Write-Host "       ║" -ForegroundColor Magenta
     Write-Host "  ║   " -ForegroundColor Magenta -NoNewline
-    Write-Host " |  \| | / _ \ \ \ / / _` | | / /| | " -ForegroundColor White -NoNewline
+    Write-Host " |  \| | / _ \ \ \ / / _`` | | / /| | " -ForegroundColor White -NoNewline
     Write-Host "       ║" -ForegroundColor Magenta
     Write-Host "  ║   " -ForegroundColor Magenta -NoNewline
     Write-Host " | |\  || (_) | \ V / (_| | |/ /_| | " -ForegroundColor White -NoNewline
@@ -121,12 +154,11 @@ function Show-Banner {
     Write-Host ""
 }
 
-# ── Step: Python ─────────────────────────────────────────────────────────────
+# ── Step 1: Python ───────────────────────────────────────────────────────────
 
 function Ensure-Python {
-    Write-Step "1/6" "Checking for Python 3.11+..."
+    Write-Step "1/7" "Checking for Python 3.11+..."
 
-    # Check if python is available and meets version requirement
     $pythonCmd = $null
     foreach ($cmd in @("python", "python3", "py")) {
         if (Has-Command $cmd) {
@@ -141,7 +173,6 @@ function Ensure-Python {
         }
     }
 
-    # Try py launcher with version flag
     if (Has-Command "py") {
         try {
             $ver = & py -3.11 --version 2>&1 | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches[0].Value }
@@ -172,12 +203,104 @@ function Ensure-Python {
     }
 }
 
-# ── Step: Ollama ─────────────────────────────────────────────────────────────
+# ── Step 2: LLM Provider ────────────────────────────────────────────────────
+
+function Choose-LLMProvider {
+    Write-Step "2/7" "Choose your LLM provider..."
+    Write-Host ""
+    Write-Host "         NovaAI works with local and cloud LLMs." -ForegroundColor DarkGray
+    Write-Host "         Pick what works for you — you can always change it later in " -ForegroundColor DarkGray -NoNewline
+    Write-Host ".env" -ForegroundColor White
+    Write-Host ""
+
+    $choice = Ask-Choice "Which LLM provider do you want to use?" @(
+        "Ollama        — free, runs locally, no API key needed (recommended)",
+        "OpenAI        — GPT-4o, GPT-4, etc. (requires API key)",
+        "OpenRouter    — tons of models, one API key (requires API key)",
+        "LM Studio     — local OpenAI-compatible server (no API key)",
+        "Custom        — any OpenAI-compatible endpoint"
+    ) 0
+
+    $result = @{
+        Provider = "ollama"
+        ApiUrl   = ""
+        ApiKey   = ""
+        Model    = "dolphin3"
+        NeedOllama = $true
+    }
+
+    switch ($choice) {
+        0 {
+            # Ollama
+            $result.Provider = "ollama"
+            $result.NeedOllama = $true
+            $result.Model = Ask-Input "Which Ollama model?" "dolphin3"
+            Write-Info "Popular models: dolphin3, llama3.1, mistral, gemma2, phi3"
+            Write-Ok "Using Ollama with model: $($result.Model)"
+        }
+        1 {
+            # OpenAI
+            $result.Provider = "openai"
+            $result.NeedOllama = $false
+            $result.ApiUrl = "https://api.openai.com/v1/chat/completions"
+            $result.ApiKey = Ask-Input "Enter your OpenAI API key"
+            if (-not $result.ApiKey) {
+                Write-Warn "No API key entered. You can add it later in .env (LLM_API_KEY=)"
+            }
+            $result.Model = Ask-Input "Which OpenAI model?" "gpt-4o-mini"
+            Write-Info "Popular models: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo"
+            Write-Ok "Using OpenAI with model: $($result.Model)"
+        }
+        2 {
+            # OpenRouter
+            $result.Provider = "openai"
+            $result.NeedOllama = $false
+            $result.ApiUrl = "https://openrouter.ai/api/v1/chat/completions"
+            $result.ApiKey = Ask-Input "Enter your OpenRouter API key"
+            if (-not $result.ApiKey) {
+                Write-Warn "No API key entered. You can add it later in .env (LLM_API_KEY=)"
+                Write-Info "Get a key at: https://openrouter.ai/keys"
+            }
+            $result.Model = Ask-Input "Which model?" "meta-llama/llama-3.1-8b-instruct:free"
+            Write-Info "Browse models at: https://openrouter.ai/models"
+            Write-Info "Free models: meta-llama/llama-3.1-8b-instruct:free, google/gemma-2-9b-it:free"
+            Write-Ok "Using OpenRouter with model: $($result.Model)"
+        }
+        3 {
+            # LM Studio
+            $result.Provider = "openai"
+            $result.NeedOllama = $false
+            $result.ApiUrl = "http://localhost:1234/v1/chat/completions"
+            $result.Model = Ask-Input "Which model is loaded in LM Studio?" "local-model"
+            Write-Info "Make sure LM Studio's local server is running before you start NovaAI."
+            Write-Ok "Using LM Studio at localhost:1234"
+        }
+        4 {
+            # Custom
+            $result.Provider = "openai"
+            $result.NeedOllama = $false
+            $result.ApiUrl = Ask-Input "Enter the API endpoint URL (e.g. https://my-server.com/v1/chat/completions)"
+            $result.ApiKey = Ask-Input "Enter the API key (leave blank if none)"
+            $result.Model = Ask-Input "Which model?" "default"
+            Write-Ok "Using custom endpoint: $($result.ApiUrl)"
+        }
+    }
+
+    return $result
+}
+
+# ── Step 3: Ollama (only if needed) ─────────────────────────────────────────
 
 function Ensure-Ollama {
-    Write-Step "2/6" "Checking for Ollama..."
+    param([bool]$Needed = $true)
 
-    # Check common locations
+    if (-not $Needed) {
+        Write-Step "3/7" "Skipping Ollama (not needed for your provider)."
+        return $null
+    }
+
+    Write-Step "3/7" "Checking for Ollama..."
+
     $ollamaExe = $null
     $localPath = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
     if (Test-Path $localPath) {
@@ -198,7 +321,7 @@ function Ensure-Ollama {
         return $null
     }
 
-    if (Ask-YesNo "Install Ollama via winget? (needed for local LLM)") {
+    if (Ask-YesNo "Install Ollama via winget?") {
         Write-Info "Installing Ollama..."
         winget install -e --id $OLLAMA_WINGET_ID --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity --silent
         if ($LASTEXITCODE -ne 0) {
@@ -217,10 +340,10 @@ function Ensure-Ollama {
     }
 }
 
-# ── Step: Clone / Download ───────────────────────────────────────────────────
+# ── Step 4: Clone / Download ────────────────────────────────────────────────
 
 function Get-NovaAI {
-    Write-Step "3/6" "Downloading NovaAI..."
+    Write-Step "4/7" "Downloading NovaAI..."
 
     if (Test-Path "$INSTALL_DIR\setup.py") {
         Write-Ok "NovaAI already exists at $INSTALL_DIR"
@@ -233,16 +356,25 @@ function Get-NovaAI {
         if (Test-Path "$INSTALL_DIR\.git") {
             Write-Info "Pulling latest changes..."
             Push-Location $INSTALL_DIR
-            git pull origin $REPO_BRANCH --ff-only 2>&1 | Out-Null
+            $gitOut = & git pull origin $REPO_BRANCH --ff-only 2>&1 | ForEach-Object { "$_" }
+            $gitExit = $LASTEXITCODE
             Pop-Location
-            Write-Ok "Updated via git pull."
+            if ($gitExit -ne 0) {
+                Write-Warn "git pull failed (exit $gitExit). Trying fresh clone instead..."
+                Remove-Item $INSTALL_DIR -Recurse -Force
+                $gitOut = & git clone --branch $REPO_BRANCH --single-branch $REPO_URL $INSTALL_DIR 2>&1 | ForEach-Object { "$_" }
+                if ($LASTEXITCODE -ne 0) { throw "git clone failed: $($gitOut -join "`n")" }
+                Write-Ok "Fresh clone to $INSTALL_DIR"
+            } else {
+                Write-Ok "Updated via git pull."
+            }
         } else {
             Write-Info "Cloning from GitHub..."
-            git clone --branch $REPO_BRANCH --single-branch $REPO_URL $INSTALL_DIR 2>&1 | Out-Null
+            $gitOut = & git clone --branch $REPO_BRANCH --single-branch $REPO_URL $INSTALL_DIR 2>&1 | ForEach-Object { "$_" }
+            if ($LASTEXITCODE -ne 0) { throw "git clone failed: $($gitOut -join "`n")" }
             Write-Ok "Cloned to $INSTALL_DIR"
         }
     } else {
-        # Download as zip
         Write-Info "git not found — downloading as ZIP..."
         $zipUrl  = "$REPO_URL/archive/refs/heads/$REPO_BRANCH.zip"
         $zipPath = "$env:TEMP\novaai-download.zip"
@@ -252,7 +384,6 @@ function Get-NovaAI {
         if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
         Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
 
-        # The zip extracts to a folder like NovaAI-main/
         $innerDir = Get-ChildItem $extractPath | Select-Object -First 1
         if (-not (Test-Path $INSTALL_DIR)) { New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null }
         Copy-Item -Path "$($innerDir.FullName)\*" -Destination $INSTALL_DIR -Recurse -Force
@@ -263,12 +394,12 @@ function Get-NovaAI {
     }
 }
 
-# ── Step: Setup ──────────────────────────────────────────────────────────────
+# ── Step 5: Setup + configure .env ──────────────────────────────────────────
 
 function Run-Setup {
-    param([string]$PythonCmd)
+    param([string]$PythonCmd, [hashtable]$LLMConfig)
 
-    Write-Step "4/6" "Running NovaAI setup..."
+    Write-Step "5/7" "Running NovaAI setup..."
     Write-Info "This installs dependencies, downloads models, and prepares everything."
     Write-Host ""
 
@@ -284,12 +415,33 @@ function Run-Setup {
     } finally {
         Pop-Location
     }
+
+    # Configure .env with the chosen LLM provider
+    $envFile = "$INSTALL_DIR\.env"
+    if (Test-Path $envFile) {
+        Write-Info "Configuring LLM provider in .env..."
+        Set-EnvValue $envFile "LLM_PROVIDER" $LLMConfig.Provider
+        Set-EnvValue $envFile "LLM_MODEL"    $LLMConfig.Model
+
+        if ($LLMConfig.Provider -eq "ollama") {
+            Set-EnvValue $envFile "OLLAMA_MODEL" $LLMConfig.Model
+            Set-EnvValue $envFile "LLM_API_URL"  ""
+            Set-EnvValue $envFile "LLM_API_KEY"  ""
+        } else {
+            Set-EnvValue $envFile "LLM_API_URL"   $LLMConfig.ApiUrl
+            Set-EnvValue $envFile "LLM_API_KEY"   $LLMConfig.ApiKey
+            Set-EnvValue $envFile "OPENAI_MODEL"  $LLMConfig.Model
+            Set-EnvValue $envFile "OPENAI_API_URL" $LLMConfig.ApiUrl
+            Set-EnvValue $envFile "OPENAI_API_KEY" $LLMConfig.ApiKey
+        }
+        Write-Ok "LLM provider configured."
+    }
 }
 
-# ── Step: GPU ────────────────────────────────────────────────────────────────
+# ── Step 6: GPU ──────────────────────────────────────────────────────────────
 
 function Ask-GPU {
-    Write-Step "5/6" "GPU acceleration..."
+    Write-Step "6/7" "GPU acceleration..."
 
     $choice = Ask-Choice "Do you have an NVIDIA GPU for faster voice synthesis?" @(
         "Yes — install CUDA-accelerated PyTorch (recommended for NVIDIA GPUs)",
@@ -315,10 +467,10 @@ function Ask-GPU {
     }
 }
 
-# ── Step: Shortcut ───────────────────────────────────────────────────────────
+# ── Step 7: Shortcut ────────────────────────────────────────────────────────
 
 function Ask-Shortcut {
-    Write-Step "6/6" "Desktop shortcut..."
+    Write-Step "7/7" "Desktop shortcut..."
 
     if (Ask-YesNo "Create a desktop shortcut for NovaAI?") {
         try {
@@ -331,7 +483,6 @@ function Ask-Shortcut {
             $shortcut.WorkingDirectory = $INSTALL_DIR
             $shortcut.Description = "NovaAI - AI Companion Studio"
 
-            # Use the Python icon if available
             $pythonIcon = "$INSTALL_DIR\.venv\Scripts\python.exe"
             if (Test-Path $pythonIcon) {
                 $shortcut.IconLocation = "$pythonIcon,0"
@@ -350,6 +501,8 @@ function Ask-Shortcut {
 # ── Finish ───────────────────────────────────────────────────────────────────
 
 function Show-Finish {
+    param([hashtable]$LLMConfig)
+
     Write-Host ""
     Write-Host "  ╔══════════════════════════════════════════════════════╗" -ForegroundColor Green
     Write-Host "  ║                                                      ║" -ForegroundColor Green
@@ -361,6 +514,17 @@ function Show-Finish {
     Write-Host ""
     Write-Host "    Installed to: " -NoNewline -ForegroundColor DarkGray
     Write-Host $INSTALL_DIR -ForegroundColor White
+    Write-Host "    LLM:          " -NoNewline -ForegroundColor DarkGray
+    $providerLabel = switch ($LLMConfig.Provider) {
+        "ollama" { "Ollama ($($LLMConfig.Model))" }
+        default  {
+            if ($LLMConfig.ApiUrl -match "openrouter") { "OpenRouter ($($LLMConfig.Model))" }
+            elseif ($LLMConfig.ApiUrl -match "openai\.com") { "OpenAI ($($LLMConfig.Model))" }
+            elseif ($LLMConfig.ApiUrl -match "localhost:1234") { "LM Studio ($($LLMConfig.Model))" }
+            else { "Custom ($($LLMConfig.Model))" }
+        }
+    }
+    Write-Host $providerLabel -ForegroundColor White
     Write-Host ""
     Write-Host "    To launch NovaAI anytime:" -ForegroundColor DarkGray
     Write-Host ""
@@ -369,6 +533,68 @@ function Show-Finish {
     Write-Host ""
     Write-Host "    Or use the desktop shortcut if you created one." -ForegroundColor DarkGray
     Write-Host ""
+    Write-Host "    Change LLM provider anytime by editing " -ForegroundColor DarkGray -NoNewline
+    Write-Host ".env" -ForegroundColor White -NoNewline
+    Write-Host " in the install folder." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+# ── Ollama helpers (start + pull model) ──────────────────────────────────────
+
+function Start-OllamaAndPull {
+    param([string]$OllamaExe, [string]$Model)
+
+    if (-not $OllamaExe) { return }
+
+    # Check if already running
+    $running = $false
+    try {
+        $null = Invoke-WebRequest -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 3 -UseBasicParsing
+        $running = $true
+    } catch { }
+
+    if (-not $running) {
+        Write-Info "Starting Ollama..."
+        $appPath = "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+        if (Test-Path $appPath) {
+            Start-Process $appPath -WindowStyle Hidden
+        } else {
+            Start-Process $OllamaExe -ArgumentList "serve" -WindowStyle Hidden
+        }
+
+        Write-Info "Waiting for Ollama to come online..."
+        $online = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 3 -UseBasicParsing
+                $online = $true
+                break
+            } catch { }
+        }
+        if (-not $online) {
+            Write-Warn "Ollama didn't start in time. You can start it manually later."
+            return
+        }
+        Write-Ok "Ollama is online."
+    } else {
+        Write-Ok "Ollama is already running."
+    }
+
+    # Pull model
+    Write-Info "Checking model '$Model'..."
+    $showOut = & $OllamaExe show $Model 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Info "Pulling model '$Model'... (this may take a while)"
+        & $OllamaExe pull $Model
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Could not pull model '$Model'. You can pull it later: ollama pull $Model"
+        } else {
+            Write-Ok "Model '$Model' is ready."
+        }
+    } else {
+        Write-Ok "Model '$Model' is already available."
+    }
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -376,14 +602,33 @@ function Show-Finish {
 function Main {
     Show-Banner
 
+    # Step 1: Python
     $pythonCmd = Ensure-Python
-    $ollamaExe = Ensure-Ollama
+
+    # Step 2: Choose LLM provider
+    $llmConfig = Choose-LLMProvider
+
+    # Step 3: Ollama (only if chosen)
+    $ollamaExe = Ensure-Ollama -Needed $llmConfig.NeedOllama
+
+    # Step 4: Download NovaAI
     Get-NovaAI
-    Run-Setup -PythonCmd $pythonCmd
+
+    # Step 5: Run setup + configure .env
+    Run-Setup -PythonCmd $pythonCmd -LLMConfig $llmConfig
+
+    # Start Ollama and pull model if needed
+    if ($llmConfig.NeedOllama -and $ollamaExe) {
+        Start-OllamaAndPull -OllamaExe $ollamaExe -Model $llmConfig.Model
+    }
+
+    # Step 6: GPU
     Ask-GPU
+
+    # Step 7: Shortcut
     Ask-Shortcut
 
-    Show-Finish
+    Show-Finish -LLMConfig $llmConfig
 
     if (Ask-YesNo "Launch NovaAI now?") {
         Write-Host ""
