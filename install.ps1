@@ -454,11 +454,11 @@ function Ask-GPU {
         Write-Host ""
 
         $cudaChoice = Ask-Choice "Which CUDA version?" @(
-            "CUDA 12.8  — latest, RTX 20/30/40/50 series (driver 570+)",
-            "CUDA 12.6  — stable, RTX 20/30/40 series (driver 560+)",
-            "CUDA 12.4  — safe bet for most GPUs (driver 550+)",
-            "CUDA 12.1  — older driver compat (driver 530+)",
-            "CUDA 11.8  — legacy, GTX 900/1000 or very old drivers (driver 520+)"
+            "CUDA 12.8  — latest, RTX 20/30/40/50 series, newest drivers",
+            "CUDA 12.6  — stable, RTX 20/30/40 series",
+            "CUDA 12.4  — safe bet for most modern GPUs",
+            "CUDA 12.1  — slightly older drivers",
+            "CUDA 11.8  — legacy, GTX 900/1000 series or old drivers"
         ) 0
 
         $cudaUrl = switch ($cudaChoice) {

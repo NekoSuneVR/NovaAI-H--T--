@@ -457,6 +457,44 @@ PRs welcome! If you're not sure where to start, open an issue and we'll point yo
 
 ---
 
+## 🐧 Linux Support — To-Do
+
+> NovaAI is currently **Windows-only**. Cross-platform (Linux + Windows) support is planned. Here's what needs doing:
+
+### 🔧 Python Code Changes
+
+- [ ] **`setup.py`** — Detect platform for venv paths (`Scripts\python.exe` → `bin/python`)
+- [ ] **`setup.py`** — Guard `subprocess.DETACHED_PROCESS` / `CREATE_NO_WINDOW` flags (Windows-only)
+- [ ] **`setup.py`** — Ollama paths: use `shutil.which()` instead of `LOCALAPPDATA` on Linux
+- [ ] **`novaai/tts.py`** — MP3 playback uses Windows MCI (`winmm.dll`) — add Linux fallback (ffplay or `sounddevice`)
+- [ ] **`novaai/tts.py`** — Add Linux audio API names to host API priority (ALSA, PulseAudio, JACK)
+- [ ] **`novaai/updater.py`** — Remove `os.name != "nt"` guard so git detection works on Linux
+- [ ] **`novaai/updater.py`** — Guard Windows-specific git paths (`C:\Program Files\Git\...`)
+- [ ] **`novaai/launcher.py`** — Make setup call platform-aware (currently hardcodes Windows paths)
+
+### 📜 New Files
+
+- [ ] **`install.sh`** — Linux equivalent of `install.ps1` (Python check, LLM provider choice, Ollama install, venv setup, CUDA selection, desktop launcher)
+
+### 🏷️ Metadata
+
+- [ ] Update README badge from `platform-Windows` to `platform-Windows | Linux`
+- [ ] Update docs with Linux install instructions
+
+### ✅ Already Cross-Platform (no changes needed)
+
+| Component | Why It Works |
+|-----------|-------------|
+| pywebview GUI | Auto-uses GTK on Linux, EdgeChromium on Windows |
+| ffplay media player | `shutil.which("ffplay")` works everywhere |
+| Performance detection | Has `os.sysconf()` fallback for Linux RAM |
+| Window icon | Guarded with `sys.platform != "win32"` |
+| WAV playback | Uses cross-platform `sounddevice` library |
+| All features (reminders, todos, etc.) | Pure Python, no OS dependencies |
+| SQLite database | Cross-platform by nature |
+
+---
+
 ## 📄 License
 
 MIT License — see [LICENSE](LICENSE).
