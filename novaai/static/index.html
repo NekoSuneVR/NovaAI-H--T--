@@ -233,16 +233,6 @@ tailwind.config = {
             </div>
           </div>
         </div>
-
-        <!-- Chat feed (fills remaining space) -->
-        <div class="flex-1 overflow-y-auto px-4 pt-2 pb-2 space-y-2" id="dash-chat-log"></div>
-
-        <!-- Chat input -->
-        <div class="flex-shrink-0 flex gap-2 p-4 border-t border-nova-border bg-nova-surface">
-          <input id="dash-chat-input" type="text" placeholder="Type a message..." class="flex-1" onkeydown="if(event.key==='Enter')doDashSend()" />
-          <button id="dash-send-btn" onclick="doDashSend()" class="btn-primary px-5 py-2 rounded-lg text-[13px] font-semibold">Send</button>
-          <button id="dash-listen-btn" onclick="doListenFromChat()" class="btn-secondary px-4 py-2 rounded-lg text-[13px] font-semibold" title="Voice input (F8)">Mic</button>
-        </div>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -637,13 +627,6 @@ function syncDashboard() {
   if (chatSend)  chatSend.disabled  = !s.session_started || s.busy;
   if (chatListen) chatListen.disabled = !s.session_started || s.busy || s.mic_muted;
 
-  // Dashboard chat controls
-  const dashInput  = $('dash-chat-input');
-  const dashSend   = $('dash-send-btn');
-  const dashListen = $('dash-listen-btn');
-  if (dashInput)  dashInput.disabled  = !s.session_started || s.busy;
-  if (dashSend)   dashSend.disabled   = !s.session_started || s.busy;
-  if (dashListen) dashListen.disabled  = !s.session_started || s.busy || s.mic_muted;
 }
 
 function setToggleUI(key, on, onLabel, offLabel) {
@@ -736,13 +719,10 @@ function _buildBubble(author, text, role) {
 }
 
 function appendChat(author, text, role) {
-  // Write to both the Chat page log and the Dashboard chat log
-  const targets = [$('chat-log'), $('dash-chat-log')];
-  for (const log of targets) {
-    if (!log) continue;
-    log.appendChild(_buildBubble(author, text, role));
-    log.scrollTop = log.scrollHeight;
-  }
+  const log = $('chat-log');
+  if (!log) return;
+  log.appendChild(_buildBubble(author, text, role));
+  log.scrollTop = log.scrollHeight;
 }
 
 function escHtml(s) {
@@ -763,17 +743,6 @@ async function doSend() {
   } catch(e) { console.error(e); }
 }
 
-async function doDashSend() {
-  const inp = $('dash-chat-input');
-  const text = inp.value.trim();
-  if (!text) return;
-  inp.value = '';
-  inp.disabled = true;
-  $('dash-send-btn').disabled = true;
-  try {
-    await api().send_message(text);
-  } catch(e) { console.error(e); }
-}
 
 async function doListenFromChat() {
   const btn = $('chat-listen-btn');

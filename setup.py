@@ -21,7 +21,7 @@ IS_WINDOWS = sys.platform == "win32"
 
 ROOT_DIR = Path(__file__).resolve().parent
 VENV_DIR = ROOT_DIR / ".venv"
-VENV_PYTHON = VENV_DIR / ("Scripts" / "python.exe" if IS_WINDOWS else "bin" / "python")
+VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe" if IS_WINDOWS else VENV_DIR / "bin" / "python"
 SETUP_MARKER = ROOT_DIR / ".setup-complete"
 ENV_FILE = ROOT_DIR / ".env"
 ENV_EXAMPLE = ROOT_DIR / ".env.example"

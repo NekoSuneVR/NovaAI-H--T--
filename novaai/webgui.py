@@ -45,6 +45,8 @@ from .features import (
     add_calendar_event,
     list_calendar_events,
     delete_calendar_event,
+    _parse_any_datetime,
+    _extract_time_str,
 )
 from .media import handle_media_request
 from .media_player import stop_media_playback
@@ -407,7 +409,10 @@ class Api:
 
     def add_reminder_item(self, text: str, time_str: str) -> dict[str, Any]:
         try:
-            add_reminder(self.profile, text, time_str)
+            due_dt = _parse_any_datetime(time_str)
+            if due_dt is None:
+                return {"ok": False, "msg": f"Could not parse date/time: {time_str}"}
+            add_reminder(self.profile, text, due_dt)
             save_profile_by_id(self.active_profile_id, self.profile)
             return {"ok": True}
         except Exception as exc:
@@ -428,7 +433,10 @@ class Api:
 
     def add_alarm_item(self, time_str: str, label: str) -> dict[str, Any]:
         try:
-            add_alarm(self.profile, time_str, label=label)
+            normalized = _extract_time_str(time_str)
+            if normalized is None:
+                return {"ok": False, "msg": f"Could not parse time: {time_str}"}
+            add_alarm(self.profile, normalized, label=label)
             save_profile_by_id(self.active_profile_id, self.profile)
             return {"ok": True}
         except Exception as exc:
