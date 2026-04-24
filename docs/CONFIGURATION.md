@@ -39,6 +39,7 @@ NovaAI is configured through environment variables in the `.env` file. Copy `.en
 |----------|---------|-------------|
 | `OLLAMA_MODEL` | `dolphin3` | Ollama model name (overridden by `LLM_MODEL` if set) |
 | `OLLAMA_API_URL` | `http://127.0.0.1:11434/api/chat` | Ollama API endpoint |
+| `OLLAMA_SKIP_LOCAL_SETUP` | `false` | Skip local Ollama install/start/model pull when using an existing Ollama server endpoint |
 | `OLLAMA_KEEP_ALIVE` | `30m` | Model keep-alive duration |
 | `OLLAMA_NUM_PREDICT` | `1200` | Token budget |
 | `OLLAMA_TEMPERATURE` | `0.95` | Temperature |

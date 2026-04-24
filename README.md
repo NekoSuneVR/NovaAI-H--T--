@@ -210,6 +210,7 @@ Copy `.env.example` to `.env` and tweak what you need:
 | `LLM_MODEL` / `OLLAMA_MODEL` | `dolphin3` | Which model to use |
 | `LLM_API_URL` | *(auto)* | Chat endpoint URL — set automatically by the installer for your chosen provider |
 | `LLM_API_KEY` | *(none)* | API key for cloud providers (OpenAI, OpenRouter, etc.) |
+| `OLLAMA_SKIP_LOCAL_SETUP` | `false` | Set `true` when using an existing Ollama server endpoint instead of local install/start |
 | `LLM_NUM_PREDICT` | `1200` | Reply token budget |
 | `LLM_TEMPERATURE` | `0.95` | Response creativity |
 

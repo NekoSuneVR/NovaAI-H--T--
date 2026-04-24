@@ -16,6 +16,7 @@ import sys
 import time
 import argparse
 from pathlib import Path
+from urllib.parse import urlparse
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -29,6 +30,21 @@ DATA_DIR = ROOT_DIR / "data"
 AUDIO_DIR = ROOT_DIR / "audio"
 REQUIREMENTS = ROOT_DIR / "requirements.txt"
 DEFAULT_OLLAMA_MODEL = "dolphin3"
+DEFAULT_OLLAMA_API_URL = "http://127.0.0.1:11434/api/chat"
+OPENAI_COMPATIBLE_PROVIDERS = {
+    "openai",
+    "chatgpt",
+    "openai-compatible",
+    "openai_compatible",
+    "custom",
+    "custom-openai",
+    "openrouter",
+    "open-router",
+    "lmstudio",
+    "lm-studio",
+    "lm studio",
+    "litellm",
+}
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
@@ -53,17 +69,59 @@ def has_winget() -> bool:
     return IS_WINDOWS and shutil.which("winget") is not None
 
 
-def read_ollama_model() -> str:
-    """Read OLLAMA_MODEL from .env, fall back to default."""
+def read_env_values() -> dict[str, str]:
+    """Read simple KEY=VALUE pairs from .env."""
     if not ENV_FILE.exists():
-        return DEFAULT_OLLAMA_MODEL
+        return {}
+    values: dict[str, str] = {}
     for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line.startswith("OLLAMA_MODEL=") and not line.startswith("#"):
-            val = line.split("=", 1)[1].strip().strip('"').strip("'")
-            if val:
-                return val
-    return DEFAULT_OLLAMA_MODEL
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def normalize_llm_provider(value: str) -> str:
+    """Map OpenAI-compatible provider aliases to the runtime provider name."""
+    normalized = value.strip().lower()
+    if normalized in OPENAI_COMPATIBLE_PROVIDERS:
+        return "openai"
+    return "ollama"
+
+
+def parse_bool_value(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def read_llm_setup_config() -> tuple[str, str, str]:
+    """Read the provider and model needed for setup-time decisions."""
+    env_values = read_env_values()
+    provider = normalize_llm_provider(
+        env_values.get("LLM_PROVIDER") or env_values.get("CHAT_PROVIDER") or "ollama"
+    )
+    if provider == "ollama":
+        model = (
+            env_values.get("LLM_MODEL")
+            or env_values.get("OLLAMA_MODEL")
+            or DEFAULT_OLLAMA_MODEL
+        )
+    else:
+        model = env_values.get("LLM_MODEL") or env_values.get("OPENAI_MODEL") or ""
+    api_url = (
+        env_values.get("LLM_API_URL")
+        or env_values.get("OLLAMA_API_URL")
+        or DEFAULT_OLLAMA_API_URL
+    )
+    return provider, model, api_url
+
+
+def is_local_ollama_url(api_url: str) -> bool:
+    """Return True when the Ollama endpoint points at this machine."""
+    parsed = urlparse(api_url)
+    host = (parsed.hostname or "").lower()
+    return host in {"", "localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
 # ── Python / venv ────────────────────────────────────────────────────────────
@@ -222,42 +280,63 @@ def full_setup() -> None:
     ensure_project_files()
     print("    Runtime files ready.")
 
-    ollama_model = read_ollama_model()
+    llm_provider, llm_model, llm_api_url = read_llm_setup_config()
+    env_values = read_env_values()
+    skip_local_ollama = parse_bool_value(
+        env_values.get("OLLAMA_SKIP_LOCAL_SETUP")
+        or env_values.get("SKIP_LOCAL_OLLAMA")
+        or "false"
+    )
+    needs_ollama = (
+        llm_provider == "ollama"
+        and is_local_ollama_url(llm_api_url)
+        and not skip_local_ollama
+    )
 
-    step(4, total, "Checking Ollama...")
-    ollama_exe = find_ollama()
-    if not ollama_exe:
-        try:
-            install_ollama()
-            # Re-check after install
-            ollama_exe = find_ollama()
-        except RuntimeError as exc:
-            print(f"    Warning: {exc}")
-    if ollama_exe:
-        print(f"    Found Ollama: {ollama_exe}")
+    ollama_exe = None
+    if needs_ollama:
+        step(4, total, "Checking Ollama...")
+        ollama_exe = find_ollama()
+        if not ollama_exe:
+            try:
+                install_ollama()
+                # Re-check after install
+                ollama_exe = find_ollama()
+            except RuntimeError as exc:
+                print(f"    Warning: {exc}")
+        if ollama_exe:
+            print(f"    Found Ollama: {ollama_exe}")
+        else:
+            print("    Ollama not found - skipping Ollama steps.")
+            print("    Install it later from https://ollama.com/download")
+
+        if ollama_exe:
+            step(5, total, "Starting Ollama...")
+            try:
+                start_ollama(ollama_exe)
+                print("    Ollama is online.")
+            except RuntimeError as exc:
+                print(f"    Warning: {exc}")
+                ollama_exe = None  # skip model pull
+
+        if ollama_exe:
+            step(6, total, f"Pulling chat model ({llm_model})...")
+            try:
+                ensure_ollama_model(ollama_exe, llm_model)
+                print("    Model ready.")
+            except Exception as exc:
+                print(f"    Warning: Could not pull model - {exc}")
+        else:
+            step(5, total, "Skipping Ollama start (not installed).")
+            step(6, total, "Skipping model pull (Ollama not available).")
     else:
-        print("    Ollama not found — skipping Ollama steps.")
-        print("    Install it later from https://ollama.com/download")
-
-    if ollama_exe:
-        step(5, total, "Starting Ollama...")
-        try:
-            start_ollama(ollama_exe)
-            print("    Ollama is online.")
-        except RuntimeError as exc:
-            print(f"    Warning: {exc}")
-            ollama_exe = None  # skip model pull
-
-    if ollama_exe:
-        step(6, total, f"Pulling chat model ({ollama_model})...")
-        try:
-            ensure_ollama_model(ollama_exe, ollama_model)
-            print("    Model ready.")
-        except Exception as exc:
-            print(f"    Warning: Could not pull model — {exc}")
-    else:
-        step(5, total, "Skipping Ollama start (not installed).")
-        step(6, total, "Skipping model pull (Ollama not available).")
+        if llm_provider == "ollama":
+            provider_label = f"remote Ollama endpoint: {llm_api_url}"
+        else:
+            provider_label = f"{llm_provider} ({llm_model})" if llm_model else llm_provider
+        step(4, total, f"Skipping local Ollama for: {provider_label}")
+        step(5, total, "Skipping Ollama start (not needed).")
+        step(6, total, "Skipping Ollama model pull (not needed).")
 
     step(7, total, "Preloading speech and voice models...")
     try:
@@ -269,7 +348,12 @@ def full_setup() -> None:
 
     step(8, total, "Writing setup marker...")
     SETUP_MARKER.write_text(
-        f"setup_completed=1\nollama_model={ollama_model}\n",
+        (
+            f"setup_completed=1\n"
+            f"llm_provider={llm_provider}\n"
+            f"llm_model={llm_model}\n"
+            f"llm_api_url={llm_api_url}\n"
+        ),
         encoding="utf-8",
     )
     print("    Done.")

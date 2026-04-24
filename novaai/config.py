@@ -59,7 +59,10 @@ def normalize_llm_provider(value: str) -> str:
         "openai_compatible",
         "custom",
         "custom-openai",
+        "openrouter",
+        "open-router",
         "lmstudio",
+        "lm-studio",
         "lm studio",
         "litellm",
     }:

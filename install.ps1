@@ -131,6 +131,37 @@ function Set-EnvValue {
     $newLines | Set-Content $FilePath -Encoding UTF8
 }
 
+function Configure-LLMEnv {
+    param([hashtable]$LLMConfig)
+
+    $envFile = "$INSTALL_DIR\.env"
+    $envExample = "$INSTALL_DIR\.env.example"
+    if (-not (Test-Path $envFile) -and (Test-Path $envExample)) {
+        Copy-Item $envExample $envFile
+    }
+    if (-not (Test-Path $envFile)) { return }
+
+    Write-Info "Configuring LLM provider in .env..."
+    Set-EnvValue $envFile "LLM_PROVIDER" $LLMConfig.Provider
+    Set-EnvValue $envFile "LLM_MODEL"    $LLMConfig.Model
+
+    if ($LLMConfig.Provider -eq "ollama") {
+        $skipLocalOllama = (-not $LLMConfig.NeedOllama).ToString().ToLower()
+        Set-EnvValue $envFile "OLLAMA_MODEL" $LLMConfig.Model
+        Set-EnvValue $envFile "LLM_API_URL"  $LLMConfig.ApiUrl
+        Set-EnvValue $envFile "OLLAMA_API_URL" $LLMConfig.ApiUrl
+        Set-EnvValue $envFile "OLLAMA_SKIP_LOCAL_SETUP" $skipLocalOllama
+        Set-EnvValue $envFile "LLM_API_KEY"  ""
+    } else {
+        Set-EnvValue $envFile "LLM_API_URL"   $LLMConfig.ApiUrl
+        Set-EnvValue $envFile "LLM_API_KEY"   $LLMConfig.ApiKey
+        Set-EnvValue $envFile "OPENAI_MODEL"  $LLMConfig.Model
+        Set-EnvValue $envFile "OPENAI_API_URL" $LLMConfig.ApiUrl
+        Set-EnvValue $envFile "OPENAI_API_KEY" $LLMConfig.ApiKey
+    }
+    Write-Ok "LLM provider configured."
+}
+
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 function Show-Banner {
@@ -234,7 +265,13 @@ function Choose-LLMProvider {
             $result.NeedOllama = $true
             $result.Model = Ask-Input "Which Ollama model?" "dolphin3"
             Write-Info "Popular models: dolphin3, llama3.1, mistral, gemma2, phi3"
-            Write-Ok "Using Ollama with model: $($result.Model)"
+            if (Ask-YesNo "Use an existing Ollama server endpoint instead of installing/running Ollama here?" $false) {
+                $result.ApiUrl = Ask-Input "Enter Ollama endpoint URL (base URL or /api/chat)" "http://127.0.0.1:11434/api/chat"
+                $result.NeedOllama = $false
+                Write-Ok "Using Ollama server at: $($result.ApiUrl)"
+            } else {
+                Write-Ok "Using local Ollama with model: $($result.Model)"
+            }
         }
         1 {
             # OpenAI
@@ -293,7 +330,7 @@ function Ensure-Ollama {
     param([bool]$Needed = $true)
 
     if (-not $Needed) {
-        Write-Step "3/7" "Skipping Ollama (not needed for your provider)."
+        Write-Step "3/7" "Skipping local Ollama install/start (not needed)."
         return $null
     }
 
@@ -400,6 +437,8 @@ function Run-Setup {
     Write-Info "This installs dependencies, downloads models, and prepares everything."
     Write-Host ""
 
+    Configure-LLMEnv -LLMConfig $LLMConfig
+
     Push-Location $INSTALL_DIR
     try {
         if ($PythonCmd -eq "py") {
@@ -411,27 +450,6 @@ function Run-Setup {
         Write-Ok "Setup complete."
     } finally {
         Pop-Location
-    }
-
-    # Configure .env with the chosen LLM provider
-    $envFile = "$INSTALL_DIR\.env"
-    if (Test-Path $envFile) {
-        Write-Info "Configuring LLM provider in .env..."
-        Set-EnvValue $envFile "LLM_PROVIDER" $LLMConfig.Provider
-        Set-EnvValue $envFile "LLM_MODEL"    $LLMConfig.Model
-
-        if ($LLMConfig.Provider -eq "ollama") {
-            Set-EnvValue $envFile "OLLAMA_MODEL" $LLMConfig.Model
-            Set-EnvValue $envFile "LLM_API_URL"  ""
-            Set-EnvValue $envFile "LLM_API_KEY"  ""
-        } else {
-            Set-EnvValue $envFile "LLM_API_URL"   $LLMConfig.ApiUrl
-            Set-EnvValue $envFile "LLM_API_KEY"   $LLMConfig.ApiKey
-            Set-EnvValue $envFile "OPENAI_MODEL"  $LLMConfig.Model
-            Set-EnvValue $envFile "OPENAI_API_URL" $LLMConfig.ApiUrl
-            Set-EnvValue $envFile "OPENAI_API_KEY" $LLMConfig.ApiKey
-        }
-        Write-Ok "LLM provider configured."
     }
 }
 

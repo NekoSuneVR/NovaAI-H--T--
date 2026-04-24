@@ -189,7 +189,13 @@ choose_llm_provider() {
             NEED_OLLAMA=true
             LLM_MODEL=$(ask_input "Which Ollama model?" "dolphin3")
             info "Popular models: dolphin3, llama3.1, mistral, gemma2, phi3"
-            ok "Using Ollama with model: $LLM_MODEL"
+            if ask_yes_no "Use an existing Ollama server endpoint instead of installing/running Ollama here?" "n"; then
+                LLM_API_URL=$(ask_input "Enter Ollama endpoint URL (base URL or /api/chat)" "http://127.0.0.1:11434/api/chat")
+                NEED_OLLAMA=false
+                ok "Using Ollama server at: $LLM_API_URL"
+            else
+                ok "Using local Ollama with model: $LLM_MODEL"
+            fi
             ;;
         2)
             LLM_PROVIDER="openai"
@@ -237,7 +243,7 @@ choose_llm_provider() {
 
 ensure_ollama() {
     if [[ "$NEED_OLLAMA" != "true" ]]; then
-        step "3/7" "Skipping Ollama (not needed for your provider)."
+        step "3/7" "Skipping local Ollama install/start (not needed)."
         OLLAMA_EXE=""
         return
     fi
@@ -329,11 +335,10 @@ run_setup() {
     echo ""
 
     local python_cmd="$1"
-    (cd "$INSTALL_DIR" && "$python_cmd" setup.py --setup)
-    ok "Setup complete."
-
-    # Configure .env
     local env_file="$INSTALL_DIR/.env"
+    if [[ ! -f "$env_file" && -f "$INSTALL_DIR/.env.example" ]]; then
+        cp "$INSTALL_DIR/.env.example" "$env_file"
+    fi
     if [[ -f "$env_file" ]]; then
         info "Configuring LLM provider in .env..."
         set_env_value "$env_file" "LLM_PROVIDER" "$LLM_PROVIDER"
@@ -341,7 +346,13 @@ run_setup() {
 
         if [[ "$LLM_PROVIDER" == "ollama" ]]; then
             set_env_value "$env_file" "OLLAMA_MODEL" "$LLM_MODEL"
-            set_env_value "$env_file" "LLM_API_URL" ""
+            set_env_value "$env_file" "LLM_API_URL" "$LLM_API_URL"
+            set_env_value "$env_file" "OLLAMA_API_URL" "$LLM_API_URL"
+            if [[ "$NEED_OLLAMA" == "true" ]]; then
+                set_env_value "$env_file" "OLLAMA_SKIP_LOCAL_SETUP" "false"
+            else
+                set_env_value "$env_file" "OLLAMA_SKIP_LOCAL_SETUP" "true"
+            fi
             set_env_value "$env_file" "LLM_API_KEY" ""
         else
             set_env_value "$env_file" "LLM_API_URL" "$LLM_API_URL"
@@ -352,6 +363,9 @@ run_setup() {
         fi
         ok "LLM provider configured."
     fi
+
+    (cd "$INSTALL_DIR" && "$python_cmd" setup.py --setup)
+    ok "Setup complete."
 }
 
 # ── Ollama start + pull ──────────────────────────────────────────────────────
