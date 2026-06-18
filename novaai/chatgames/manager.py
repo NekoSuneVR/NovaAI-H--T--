@@ -42,6 +42,12 @@ class ChatGameManager:
         self.game = None
         self.game_key: str | None = None
         self._thread: threading.Thread | None = None
+        # The thread that is *authoritatively* the current game loop. A stop() may
+        # not be able to join a thread blocked in a long vote window before the
+        # next start() clears _stop, so we also gate every loop on being the
+        # active thread — that way an old (zombie) loop exits instead of running
+        # against torn-down state (which caused random.choice([]) crashes).
+        self._active_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._votes: dict[str, str] = {}     # username -> move token (last vote wins)
@@ -55,6 +61,10 @@ class ChatGameManager:
 
     def is_running(self) -> bool:
         return self.game is not None and self._thread is not None and self._thread.is_alive()
+
+    def _alive(self) -> bool:
+        """True only for the current loop thread that hasn't been stopped."""
+        return threading.current_thread() is self._active_thread and not self._stop.is_set()
 
     def start(self, key: str) -> dict[str, Any]:
         if self.is_running():
@@ -70,12 +80,16 @@ class ChatGameManager:
         self._votes = {}
         self._phase = "idle"
         self._thread = threading.Thread(target=self._loop, name="NovaAIChatGame", daemon=True)
+        self._active_thread = self._thread
         self._thread.start()
         return {"ok": True, "msg": f"{self.game.title} started."}
 
     def stop(self) -> dict[str, Any]:
         self._stop.set()
         self._voting_open = False
+        # Disown the loop thread immediately so it can't act even if it's blocked
+        # in a vote window and outlives the join below.
+        self._active_thread = None
         t = self._thread
         if t and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=2.0)
@@ -89,9 +103,13 @@ class ChatGameManager:
 
     def register_vote(self, username: str, text: str) -> None:
         """Feed a raw Twitch chat line in as a possible vote (no-op off-turn)."""
-        if not self._voting_open or self.game is None:
+        game = self.game
+        if not self._voting_open or game is None:
             return
-        move = self.game.parse_vote(text)
+        try:
+            move = game.parse_vote(text)
+        except Exception:
+            return
         if move is None:
             return
         with self._lock:
@@ -119,7 +137,7 @@ class ChatGameManager:
     # ── main loop ─────────────────────────────────────────────────────────────
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        while self._alive():
             game = self.game
             if game is None:
                 return
@@ -128,7 +146,7 @@ class ChatGameManager:
             self._announce_start()
             self._phase = "voting" if game.current_player == CHAT else "thinking"
             self._push()
-            while not self._stop.is_set() and not game.over:
+            while self._alive() and not game.over:
                 self._opts = self._get_options() or {}
                 # A side with no legal move passes (e.g. Reversi). Games without a
                 # pass concept never hit this (empty legal_moves ⇒ game over).
@@ -139,14 +157,14 @@ class ChatGameManager:
                         self._phase = self._phase_after()
                         self._push()
                         if not game.over:
-                            self.send_chat(f"{'Chat' if passer == CHAT else 'NovaAI'} has no move — pass!")
+                            self._send_chat(f"{'Chat' if passer == CHAT else 'NovaAI'} has no move — pass!")
                         continue
                     break
                 if game.current_player == CHAT:
                     self._chat_turn()
                 else:
                     self._ai_turn()
-            if self._stop.is_set():
+            if not self._alive():
                 return
             self._phase = "over"
             self._push()
@@ -159,6 +177,8 @@ class ChatGameManager:
 
     def _chat_turn(self) -> None:
         game = self.game
+        if game is None:
+            return
         secs = max(5, int(self._opts.get("vote_seconds", 15)))
         with self._lock:
             self._votes = {}
@@ -169,16 +189,21 @@ class ChatGameManager:
         self._send_chat(f"🗳️ Chat's turn! {game.vote_hint()} — {secs}s on the clock.")
         # Wait out the clock; votes arrive via register_vote(). Push ~1/s so the
         # overlay countdown + tallies stay fresh even with no new votes.
-        while time.time() < self._deadline and not self._stop.is_set():
+        while time.time() < self._deadline and self._alive():
             self._push()
             self._stop.wait(min(1.0, max(0.0, self._deadline - time.time())))
         self._voting_open = False
-        if self._stop.is_set():
+        # Bail if we were stopped/superseded or the game ended/changed under us —
+        # otherwise random.choice() below can hit an empty move list and crash.
+        if not self._alive() or game is not self.game or game.over:
+            return
+        legal = game.legal_moves()
+        if not legal:
             return
         move = self._tally()
         quiet = move is None
         if quiet:
-            move = random.choice(game.legal_moves())
+            move = random.choice(legal)
         event = game.apply_move(move, CHAT)
         self._phase = self._phase_after()
         self._push()
@@ -191,14 +216,16 @@ class ChatGameManager:
 
     def _ai_turn(self) -> None:
         game = self.game
+        if game is None:
+            return
         self._phase = "thinking"
         self._push()
         # Suspense beat before NovaAI commits (also lets her speak between turns).
         self._sleep(float(self._opts.get("ai_delay", 2.5)))
-        if self._stop.is_set():
+        if not self._alive() or game is not self.game or game.over:
             return
         move = game.ai_choose()
-        if not move:
+        if not move or move not in game.legal_moves():
             return
         event = game.apply_move(move, AI)
         self._phase = self._phase_after()
