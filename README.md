@@ -29,6 +29,11 @@ Think Alexa, but with *attitude* and zero cloud lock-in. 🔥
 | 🧬 | **Memory / Learning** | RAG long-term memory — remembers facts across sessions and gets better |
 | 🧍 | **VRM Avatar** | 3D avatar that lip-syncs, emotes (20+), idles, dances, and plays **MMD** motions — OBS-ready |
 | 🎮 | **Game Playing** | Autonomously plays Minecraft (Mineflayer) + a universal vision driver |
+| ♠ | **Chat Games** | Twitch chat plays **Connect 4, Battleship, Minesweeper, Reversi, Tic-Tac-Toe, RPS, Nim vs NovaAI** with live OBS board overlays — Neuro-sama style |
+| 🕹️ | **Neuro Game SDK** | Hosts the **Neuro Game SDK** server so NovaAI plays real SDK games (Among Us, Liar's Bar, Buckshot Roulette, Inscryption, Hollow Knight…) |
+| 🖼️ | **Image Review** | Show NovaAI an image — it looks, reads any text, and reacts in-character (great for art, memes, or a pic of itself) |
+| 👁️ | **Watch & React** | NovaAI periodically glances at your screen (game/video) and reacts live in-character — to chat, voice, and Twitch |
+| 🌐 | **Per-language Voice** | Auto-detects each reply's language and speaks it in that language (Japanese line → Japanese voice, etc.) |
 | 🎤 | **Singing** | Sings songs in its own voice over an auto-found YouTube instrumental |
 | 🌐 | **Web Search** | Manual or auto-triggered lookups via SearXNG / DuckDuckGo |
 | 🎵 | **Music & Radio** | SoundCloud search, internet radio, in-app playback |
@@ -101,7 +106,7 @@ In **`--web`** mode the **dashboard, avatar overlay and avatar WebSocket all sha
 
 The avatar bridge still listens internally on `8766`/`8765`, but only on **localhost** now — the web port proxies to it, so those ports never need to be exposed. Just open the dashboard at e.g. `http://192.168.1.107:8800/` (or your Tailscale IP); opening the **Avatar** window points a new tab at `…:8800/avatar` on the same host you're already using.
 
-- ☁️ **Cloudflare tunnel (one hostname):** point a single ingress at the web port — everything (dashboard, `/avatar`, the `/avatar-ws` WebSocket, `/overlay/earnings`) rides it. No `:8766`/`:8765`/`:5555` ports to forward; the page builds same-origin `wss://your-domain/avatar-ws` automatically:
+- ☁️ **Cloudflare tunnel (one hostname):** point a single ingress at the web port — everything (dashboard, `/avatar`, the `/avatar-ws` WebSocket, `/overlay/earnings`, `/overlay/game`) rides it. No `:8766`/`:8765`/`:5555` ports to forward; the page builds same-origin `wss://your-domain/avatar-ws` automatically:
   ```yaml
   ingress:
     - hostname: nova.example.com
@@ -111,7 +116,7 @@ The avatar bridge still listens internally on `8766`/`8765`, but only on **local
       service: http://localhost:8768
     - service: http_status:404
   ```
-- 🎬 **OBS Browser Sources:** avatar at `http://<host>:8800/avatar?transparent=1` (shows *only* the avatar) and the tips overlay at `http://<host>:8800/overlay/earnings`.
+- 🎬 **OBS Browser Sources:** avatar at `http://<host>:8800/avatar?transparent=1` (shows *only* the avatar), the tips overlay at `http://<host>:8800/overlay/earnings`, and the **chat-game board** at `http://<host>:8800/overlay/game`.
 - 🖥️ The **desktop GUI** (`--gui`) is a local app, so these services stay bound to **`127.0.0.1`** (localhost only) and use their own ports directly.
 - 🔒 The avatar bridge is localhost-only in web mode; `MC_VIEWER_HOST` controls the Live View's exposure (default `0.0.0.0`). Set per-service hosts to override.
 
@@ -135,6 +140,7 @@ NovaAI runs as a native desktop window powered by **pywebview + Tailwind CSS** �
 | 🧍 **Avatar** | Upload a VRM, open the OBS window, test emotions, toggle lip-sync |
 | 💃 **MMD** | Add dances (motion + song + camera bundled per row), play on the avatar, delete |
 | 🎮 **Game** | Pick a driver (Minecraft/universal/etc.), set a goal, watch the live view |
+| ♠ **Chat Games** | Start Connect 4 / Minesweeper vs Twitch chat (OBS overlay), **and** host the Neuro Game SDK server to play external SDK games |
 | 🎤 **Sing** | Type a song, attach/auto-find a backing track, replay saved songs |
 | 👤 **Profiles** | Create, clone, switch, delete, or import/export personalities |
 | ⚙️ **Settings** | Audio devices, web search, LLM/TTS/STT config |
@@ -213,8 +219,36 @@ NovaAI autonomously plays games, narrating its thoughts aloud (in chat, voice, a
 
 - **Minecraft** via a Mineflayer Node bridge: mine, build, craft, smelt, farm crops/trees with bone meal, fish, breed animals, trade villagers, fight mobs, follow/help whitelisted players, auto-equip better tools
 - **Live View**: a fancy green dashboard serving the 3D world (prismarine-viewer) + live inventory + the bot's thoughts + server chat on **one port**
-- **Universal driver**: a vision+input agent (set a `VISION_MODEL`) for TOS-safe single-player games; plus **VRChat** (OSC), **Factorio** (RCON), and offline-only **osu!**
+- **Universal driver**: a vision+input agent (set a `VISION_MODEL`) for TOS-safe single-player games; plus **Factorio** (RCON), and offline-only **osu!**
+- **VRChat** (official OSC, EAC-safe): walk/strafe/run/turn/look, jump, chatbox (with typing indicator), and avatar emotes. It also **receives** avatar params (Velocity/Grounded) to notice walls + ledges, and reads VRChat's logs for the current world and **who's in the instance** (greets people by name) — no risky web API, no GPU
 - Per-game settings live in the **Game** panel — no `.env` editing to switch servers. Requires Node.js 18+ and `npm install` in `node/minecraft-bridge`
+
+### ♠ Chat Games — Twitch chat vs NovaAI
+
+Turn-based games where **Twitch chat plays against NovaAI**, Neuro-sama style. Chat votes a move during a countdown, the most-voted legal move is played, then NovaAI answers with a real game engine and trash-talks in voice + chat. Each has a live OBS board overlay.
+
+- **Connect 4** — vote a column (`1`-`7`); NovaAI plays alpha-beta minimax (really blocks + sets up wins).
+- **Battleship** — take turns firing (vote `e5`); NovaAI hunts your fleet with a checkerboard + target AI. Sink all ships to win.
+- **Minesweeper** — alternate revealing cells (vote `c4`); reveal a mine and you lose. NovaAI runs a constraint solver and only knows what's revealed, same as chat. First reveal is always safe.
+- **Reversi / Othello** — vote a square (`d3`); NovaAI plays a corner-prizing positional engine. Most discs wins.
+- **Tic-Tac-Toe** — vote a cell (`1`-`9`); NovaAI plays perfect minimax, so the best chat can force is a draw.
+- **Rock-Paper-Scissors** — best of 5; vote `rock`/`paper`/`scissors`; NovaAI reads chat's patterns and counters them.
+- **Nim** — vote `heap count` (e.g. `2 3`); take the last object to win. NovaAI plays the optimal nim-sum strategy.
+- **Start it** from the **Chat Games** panel, or let mods start it in chat: `!game connect4` / `!game battleship` / `!game reversi` / … / `!game stop`. Adding more games is one small module — the picker lists whatever's registered.
+- **OBS overlay** at **`/overlay/game`** (transparent browser source): live board, per-column/-cell vote tally, turn + countdown — exactly like the screenshot. Connect the **Stream** (Twitch) first so chat can vote; tune the vote window, think delay, first mover, and auto-rematch in the panel.
+- The engine picks the moves (always legal, genuinely strong); the **persona only does the commentary** — so NovaAI plays well *and* stays in character.
+
+### 🖼️ Image Review — NovaAI looks and reacts
+
+Show NovaAI an image and it actually **sees** it: open the **Chat** tab, click 🖼️, pick an image, and (optionally) ask a question. NovaAI describes what's there, **reads any text** in it, and gives an in-character opinion in chat + voice — react to art, memes, screenshots, or a picture of itself. Uses a local **Ollama vision model** (set a Vision model in Settings, e.g. `llava` / `qwen2.5vl` / `moondream`) or an **OpenAI-compatible multimodal** chat model.
+
+### 🕹️ Neuro Game SDK — play real games
+
+NovaAI hosts the **[Neuro Game SDK](https://github.com/VedalAI/neuro-game-sdk)** server, so it's a drop-in replacement for "Neuro" on the AI side. **Any** game built with the SDK connects to NovaAI and NovaAI perceives the game and chooses the actions — one server unlocks every community integration:
+
+- 🔪 [Liar's Bar](https://github.com/VedalAI/neuro-liarsbar) · 🔫 [Buckshot Roulette](https://github.com/VedalAI/neuro-buckshotroulette-reference) · 🧑‍🚀 [Among Us](https://github.com/VedalAI/neuro-amongus) · 🃏 [Inscryption](https://github.com/VedalAI/neuro-inscryption) · 🦋 [Hollow Knight](https://github.com/VedalAI/neuro-hollow-knight) · 🌃 [Cyberpunk](https://github.com/VedalAI/neuro-cyberpunk) · 🔴 [Pokémon Platinum](https://github.com/VedalAI/neuro-pokemon-platinum) · 💰 [Who Wants to Be a Millionaire](https://github.com/VedalAI/neuro-millionaire) — and anything else using the SDK.
+
+**How it works:** the game is a WebSocket *client*; NovaAI is the *server*. Start the server from the **Chat Games** panel (it listens on `ws://<host>:8000` by default), then point the game at it by setting its `NEURO_SDK_WS_URL` environment variable to that URL and launching it. When the game asks NovaAI to act, the shared LLM engine reads the game state + the registered actions, picks one, and fills its JSON schema (validated/repaired automatically, with retries if the game rejects a move); non-silent game events get a spoken in-character reaction. Optional **proactive mode** lets NovaAI act on her own between prompts (for action games like Hollow Knight that don't wait for input). Configure the port, retries, proactive play, and whether to react aloud in the panel; override the bind address with `NOVA_NEURO_HOST` (defaults to the launch mode's host).
 
 ### 🎤 Singing
 
@@ -507,6 +541,9 @@ NovaAI/
     ├── avatar.py             # 🧍 VRM avatar bridge (WebSocket + HTTP + MMD)
     ├── singing.py            # 🎤 Singing engine (XTTS/gTTS + backing merge)
     ├── games/                # 🎮 Game agent + drivers (minecraft/universal/…)
+    ├── chatgames/            # ♠ Chat-vs-AI games (connect4, minesweeper, manager)
+    ├── neuro_sdk.py          # 🕹️ Neuro Game SDK server (play external SDK games)
+    ├── vision.py             # 🖼️ Image understanding (look at / read an image)
     ├── config.py             # ⚙️ Environment parsing + runtime config
     ├── database.py           # 🗄️ SQLite schema + CRUD operations
     ├── storage.py            # 💾 Profile/history API (SQLite-backed)
@@ -524,7 +561,8 @@ NovaAI/
     └── static/
         ├── index.html        # 🎨 Tailwind CSS frontend (dashboard)
         ├── avatar.html       # 🧍 three-vrm avatar renderer + MMD (OBS source)
-        └── earnings.html     # 🎉 Tips ("stockings") overlay (OBS source)
+        ├── earnings.html     # 🎉 Tips ("stockings") overlay (OBS source)
+        └── chatgame.html     # ♠ Chat-vs-AI game board overlay (OBS source)
 
 node/
 └── minecraft-bridge/         # 🎮 Mineflayer Node bridge (modular lib/)

@@ -140,7 +140,9 @@ GAME_SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
         "preview": False,
         "fields": [
             {"key": "vrchat_osc_host", "label": "OSC host", "type": "text"},
-            {"key": "vrchat_osc_port", "label": "OSC port", "type": "int"},
+            {"key": "vrchat_osc_port", "label": "OSC send port", "type": "int"},
+            {"key": "vrchat_osc_read_port", "label": "OSC listen port (avatar params)", "type": "int"},
+            {"key": "vrchat_log_dir", "label": "VRChat log dir (blank = auto-detect)", "type": "text"},
             {"key": "vision_model", "label": "Vision model (optional)", "type": "text"},
             {"key": "game_tick_seconds", "label": "Think interval (sec)", "type": "float"},
         ],
@@ -218,6 +220,7 @@ APP_SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
             {"key": "xtts_speaker_wav", "label": "Voice clone .wav (optional)", "type": "text"},
             {"key": "xtts_speed", "label": "Speed", "type": "float"},
             {"key": "tts_language", "label": "Language", "type": "text"},
+            {"key": "tts_auto_language", "label": "Auto language per reply (speak each line in its own language)", "type": "bool"},
         ],
     },
     "stt": {
@@ -310,6 +313,15 @@ class Api:
         # Game agent
         self.game_agent: Any = None
         self.game_driver_key: str | None = None  # the actually-running driver
+        # Chat-vs-AI mini-games (Connect 4, Minesweeper, …) — Twitch chat plays
+        # against NovaAI. Built in initialize() so Twitch votes can route to it.
+        self.chat_games: Any = None
+        # Neuro Game SDK server — lets external SDK games (Among Us, Liar's Bar,
+        # Buckshot Roulette, Inscryption, Hollow Knight, …) connect and be played.
+        self.neuro_sdk: Any = None
+        # Watch & React — periodically glance at the screen and react in-character.
+        self._watch_enabled = False
+        self._watch_thread: threading.Thread | None = None
 
     def initialize(self) -> dict[str, Any]:
         """Heavy init — called from JS once the loading screen is visible."""
@@ -330,6 +342,7 @@ class Api:
         self._apply_saved_ui_prefs()
         self._initialized = True
         self._start_avatar_if_enabled()
+        self._init_chat_games()
         # Update window title with the loaded companion name
         global _window
         if _window:
@@ -485,6 +498,69 @@ class Api:
         try:
             result = self._pipeline(text, from_voice=False)
             return {"ok": True, "msg": result}
+        finally:
+            self._release()
+
+    def review_image(self, image_b64: str, note: str = "") -> dict[str, Any]:
+        """Look at an uploaded image, read it, and give an in-character opinion.
+
+        NovaAI 'sees' the image via a vision model (local Ollama vision model, or
+        an OpenAI-compatible multimodal chat model), then the persona reacts to
+        what's there — so it can look at art, memes, screenshots, or a picture of
+        itself and actually comment on it.
+        """
+        if (err := self._not_ready()):
+            return err
+        from . import vision
+
+        image_bytes = vision.strip_data_uri(image_b64)
+        if not image_bytes:
+            return {"ok": False, "msg": "Could not read that image."}
+        if not vision.vision_available(self.config):
+            return {"ok": False, "msg": (
+                "No vision model configured. Set a Vision model (Settings → AI Provider, "
+                "e.g. an Ollama model like 'llava' or 'qwen2.5vl'), or use an OpenAI-compatible "
+                "multimodal chat model."
+            )}
+        if not self._acquire():
+            return {"ok": False, "msg": "System is busy."}
+        try:
+            user_name = self.profile.get("user_name", "You")
+            companion = self.profile.get("companion_name", "NovaAI")
+            label = f"🖼️ Shared an image{(' — ' + note.strip()) if note.strip() else ''}"
+            self._push_chat(user_name, label, "user")
+            self._push_status("Looking at the image...")
+            description = vision.describe_image(self.config, image_bytes)
+            if not description:
+                self._push_status("Ready.")
+                return {"ok": False, "msg": "I couldn't make out that image (vision model unavailable)."}
+
+            self._push_status("Reacting...")
+            framing = (
+                "You were just shown an image. Below is exactly what is in it (from your own "
+                "eyes). Give your honest, in-character opinion or reaction — comment on what you "
+                "see and read, like you're reacting on stream. Don't say you can't see images."
+            )
+            ask = note.strip() or "What do you think of this?"
+            result = generate_reply(
+                GenerationRequest(
+                    user_text=f"{ask}\n\n[What you see in the image]: {description}",
+                    profile=self.profile,
+                    config=self.config,
+                    source="chat",
+                    extra_system=[framing],
+                )
+            )
+            reply = result.reply
+            append_history("user", f"[shared an image] {note.strip()} (seen: {description})")
+            append_history("assistant", reply)
+            self._push_chat(companion, reply, "assistant")
+            self._remember_exchange(user_name, f"image: {description}", reply, source="chat")
+            if self.state.voice_enabled and not self._stopped():
+                self._push_status("Speaking...")
+                self._speak(reply, result.emotion)
+            self._push_status("Ready.")
+            return {"ok": True, "description": description, "reply": reply}
         finally:
             self._release()
 
@@ -855,6 +931,11 @@ class Api:
         # Show the raw chat line in the Stream feed (the streamer sees all chat).
         payload = json.dumps({"username": username, "text": text})
         self._js(f"window.__onStreamMessage({payload})")
+        # Chat-vs-AI games: a moderator/broadcaster can start/stop a game from
+        # chat, and everyone's move votes are fed to the running game. This is
+        # independent of the reply-mode gating below so anyone can play.
+        if self._handle_chat_game_message(username, text, roles):
+            return
         # Only reply when the chatter's role is allowed AND the reply-mode matches.
         if self._role_allowed(roles) and self._should_reply_to(text):
             try:
@@ -1628,10 +1709,21 @@ class Api:
         """Relaunch NovaAI (applies any settings/code changes cleanly)."""
         def _do_restart() -> None:
             time.sleep(0.4)
+            self._watch_enabled = False
             # Stop game/stream/avatar cleanly so ports free up before relaunch.
             try:
                 if self.game_agent:
                     self.game_agent.stop()
+            except Exception:
+                pass
+            try:
+                if self.chat_games:
+                    self.chat_games.stop()
+            except Exception:
+                pass
+            try:
+                if self.neuro_sdk:
+                    self.neuro_sdk.stop()
             except Exception:
                 pass
             try:
@@ -1990,6 +2082,483 @@ class Api:
             return {"ok": False, "msg": "Game agent is not running."}
         self.game_agent.set_goal(goal)
         return {"ok": True}
+
+    # ── chat-vs-AI games (Connect 4, Minesweeper, …) ─────────────────────────────
+
+    _CHAT_GAME_DEFAULTS = {
+        "vote_seconds": 15,     # how long chat has to vote each turn
+        "ai_delay": 2.5,        # suspense beat before NovaAI plays
+        "commentary": True,     # speak/post in-character trash talk
+        "auto_restart": True,   # rematch automatically after a game ends
+        "restart_seconds": 7,
+        "starter": "chat",      # who moves first: "chat" | "ai"
+        "allow_chat_start": True,  # let mods start/stop games from chat
+    }
+
+    def _init_chat_games(self) -> None:
+        if self.chat_games is not None:
+            return
+        try:
+            from .chatgames.manager import ChatGameManager
+
+            self.chat_games = ChatGameManager(
+                narrate=self._chatgame_narrate,
+                on_update=self._chatgame_update,
+                send_chat=self._chatgame_send_chat,
+                commentate=self._chatgame_commentate,
+                get_options=self._chatgame_options,
+            )
+        except Exception:
+            self.chat_games = None
+
+    def _chatgame_settings_store(self) -> dict[str, Any]:
+        from . import database
+        try:
+            saved = json.loads(database.get_state("chatgame_settings", "{}") or "{}")
+        except Exception:
+            saved = {}
+        return {**self._CHAT_GAME_DEFAULTS, **(saved if isinstance(saved, dict) else {})}
+
+    def _chatgame_options(self) -> dict[str, Any]:
+        opts = self._chatgame_settings_store()
+        opts["ai_name"] = self.profile.get("companion_name", "NovaAI") if self.profile else "NovaAI"
+        return opts
+
+    def _chatgame_update(self, state: dict[str, Any]) -> None:
+        try:
+            self._js(f"window.__onChatGame({json.dumps(state)})")
+        except Exception:
+            pass
+
+    def _chatgame_send_chat(self, text: str) -> None:
+        """Post a short game prompt/result to the UI feed + Twitch chat."""
+        self._push_chat("Game", text, "system")
+        if self.twitch and self.twitch.authenticated:
+            try:
+                self.twitch.send_message(text)
+            except Exception:
+                pass
+
+    def _chatgame_narrate(self, text: str, emotion: str = "neutral") -> None:
+        """NovaAI's commentary: show it, drive the avatar, speak it, post to chat."""
+        companion = self.profile.get("companion_name", "NovaAI") if self.profile else "NovaAI"
+        self._push_chat(companion, text, "assistant")
+        if self.avatar is not None:
+            try:
+                self.avatar.publish_state({"emotion": emotion, "danger": False})
+            except Exception:
+                pass
+        if self.twitch and self.twitch.authenticated:
+            try:
+                self.twitch.send_message(text)
+            except Exception:
+                pass
+        if self.state.voice_enabled and self._acquire():
+            try:
+                self._speak(text, emotion)
+            finally:
+                self._release()
+
+    def _chatgame_commentate(self, context: str, fallback: str, emotion: str) -> tuple[str, str]:
+        """Generate one short in-character line. Falls back to a canned line."""
+        if not self.config:
+            return fallback, emotion
+        framing = (
+            "You are live on stream playing a game against Twitch chat. Reply with "
+            "ONE short, in-character sentence of commentary — under 20 words, no "
+            "quotation marks, no stage directions."
+        )
+        try:
+            result = generate_reply(
+                GenerationRequest(
+                    user_text=context,
+                    profile=self.profile,
+                    config=self.config,
+                    source="game",
+                    extra_system=[framing],
+                    use_shared_history=False,
+                    history=[],
+                    max_tokens=60,
+                )
+            )
+            text = (result.reply or "").strip().strip('"')
+            if text:
+                return text, (result.emotion or emotion)
+        except Exception:
+            pass
+        return fallback, emotion
+
+    def _handle_chat_game_message(self, username: str, text: str, roles: set[str]) -> bool:
+        """Feed chat votes to a running game and handle mod start/stop commands.
+
+        Returns True if the message was consumed as a game command (so the normal
+        reply path is skipped). Plain votes return False so chat still flows.
+        """
+        mgr = self.chat_games
+        if mgr is None:
+            return False
+        low = text.strip().lower()
+        # Moderator/broadcaster start-stop command (consumed so it never leaks to
+        # a chat reply). Settings are only read on the command path, not per line.
+        if low.startswith("!game") and (roles & {"moderator", "broadcaster"}):
+            if self._chatgame_settings_store().get("allow_chat_start", True):
+                arg = low[5:].strip()
+                if arg in {"stop", "end", "off"}:
+                    self.stop_chat_game()
+                elif arg:
+                    key = self._resolve_chat_game_key(arg)
+                    if key:
+                        self.start_chat_game(key)
+                    else:
+                        self._chatgame_send_chat(f"Unknown game '{arg}'. Try connect4 or minesweeper.")
+            return True
+        if mgr.is_running():
+            mgr.register_vote(username, text)
+        return False
+
+    @staticmethod
+    def _resolve_chat_game_key(arg: str) -> str | None:
+        from .chatgames import GAME_REGISTRY
+        arg = arg.replace(" ", "").replace("-", "")
+        aliases = {"c4": "connect4", "connectfour": "connect4", "connect4": "connect4",
+                   "mines": "minesweeper", "ms": "minesweeper", "minesweeper": "minesweeper"}
+        key = aliases.get(arg, arg)
+        return key if key in GAME_REGISTRY else None
+
+    def list_chat_games(self) -> list[dict[str, Any]]:
+        from .chatgames import list_games
+        return list_games()
+
+    def start_chat_game(self, game_key: str) -> dict[str, Any]:
+        if (err := self._not_ready()):
+            return err
+        self._init_chat_games()
+        if self.chat_games is None:
+            return {"ok": False, "msg": "Chat games are unavailable."}
+        key = self._resolve_chat_game_key(game_key) or game_key
+        return self.chat_games.start(key)
+
+    def stop_chat_game(self) -> dict[str, Any]:
+        if self.chat_games is None:
+            return {"ok": True}
+        return self.chat_games.stop()
+
+    def get_chat_game(self) -> dict[str, Any]:
+        if self.chat_games is None:
+            return {"active": False}
+        return self.chat_games.state()
+
+    def chat_game_vote(self, move: str, username: str = "streamer") -> dict[str, Any]:
+        """Cast a vote from the UI (lets the streamer play/test without Twitch)."""
+        if self.chat_games is None or not self.chat_games.is_running():
+            return {"ok": False, "msg": "No chat game is running."}
+        self.chat_games.register_vote(str(username), str(move))
+        return {"ok": True}
+
+    def get_chat_game_settings(self) -> dict[str, Any]:
+        return self._chatgame_settings_store()
+
+    def save_chat_game_settings(self, values: dict[str, Any]) -> dict[str, Any]:
+        if (err := self._not_ready()):
+            return err
+        store = self._chatgame_settings_store()
+        for key, default in self._CHAT_GAME_DEFAULTS.items():
+            if key not in (values or {}):
+                continue
+            raw = values[key]
+            if isinstance(default, bool):
+                store[key] = bool(raw) if isinstance(raw, bool) else str(raw).lower() in {"1", "true", "yes", "on"}
+            elif isinstance(default, int):
+                try:
+                    store[key] = int(float(raw))
+                except (TypeError, ValueError):
+                    store[key] = default
+            else:
+                store[key] = str(raw)
+        from . import database
+        try:
+            database.set_state("chatgame_settings", json.dumps(store))
+        except Exception:
+            pass
+        return {"ok": True, "msg": "Game settings saved.", "settings": store}
+
+    # ── Neuro Game SDK server (NovaAI plays real SDK games) ──────────────────────
+
+    _NEURO_SDK_DEFAULTS = {
+        "port": 8000,          # games connect to ws://<host>:<port> (NEURO_SDK_WS_URL)
+        "speak_context": True, # react aloud to non-silent game-context events
+        "commentary": True,    # speak a line when choosing a forced action
+        "max_retries": 2,      # re-decide this many times if the game rejects a move
+        "proactive": False,    # act unprompted between forces (for action games)
+        "proactive_seconds": 8,  # how often to consider a proactive action
+    }
+
+    def _neuro_settings_store(self) -> dict[str, Any]:
+        from . import database
+        try:
+            saved = json.loads(database.get_state("neuro_sdk", "{}") or "{}")
+        except Exception:
+            saved = {}
+        return {**self._NEURO_SDK_DEFAULTS, **(saved if isinstance(saved, dict) else {})}
+
+    def _neuro_options(self) -> dict[str, Any]:
+        opts = self._neuro_settings_store()
+        opts["ai_name"] = self.profile.get("companion_name", "NovaAI") if self.profile else "NovaAI"
+        return opts
+
+    def _neuro_narrate(self, text: str, emotion: str = "neutral") -> None:
+        """Speak/show NovaAI's reaction while playing an SDK game."""
+        companion = self.profile.get("companion_name", "NovaAI") if self.profile else "NovaAI"
+        self._push_chat(companion, text, "assistant")
+        if self.avatar is not None:
+            try:
+                self.avatar.publish_state({"emotion": emotion, "danger": False})
+            except Exception:
+                pass
+        if self.twitch and self.twitch.authenticated:
+            try:
+                self.twitch.send_message(text)
+            except Exception:
+                pass
+        if self.state.voice_enabled and self._acquire():
+            try:
+                self._speak(text, emotion)
+            finally:
+                self._release()
+
+    def _neuro_generate(self, prompt: str, max_tokens: int = 200) -> tuple[str, str]:
+        if not self.config:
+            return "", "neutral"
+        try:
+            result = generate_reply(
+                GenerationRequest(
+                    user_text=prompt,
+                    profile=self.profile,
+                    config=self.config,
+                    source="game",
+                    use_shared_history=False,
+                    history=[],
+                    max_tokens=max_tokens,
+                )
+            )
+            return (result.reply or "").strip(), (result.emotion or "neutral")
+        except Exception:
+            return "", "neutral"
+
+    def _neuro_state(self, state: dict[str, Any]) -> None:
+        try:
+            self._js(f"window.__onNeuroSdk({json.dumps(state)})")
+        except Exception:
+            pass
+
+    def _build_neuro_sdk(self):
+        from .neuro_sdk import NeuroSdkServer
+
+        opts = self._neuro_settings_store()
+        return NeuroSdkServer(
+            port=int(opts.get("port", 8000)),
+            narrate=self._neuro_narrate,
+            generate=self._neuro_generate,
+            on_status=lambda msg: self._push_chat("Neuro SDK", msg, "system"),
+            on_state=self._neuro_state,
+            remember=self._game_remember,
+            options=self._neuro_options,
+        )
+
+    def start_neuro_sdk(self) -> dict[str, Any]:
+        if (err := self._not_ready()):
+            return err
+        if self.neuro_sdk is not None and self.neuro_sdk.is_running():
+            return {"ok": True, "msg": "Neuro SDK server is already running."}
+        try:
+            self.neuro_sdk = self._build_neuro_sdk()
+            return self.neuro_sdk.start()
+        except Exception as exc:
+            self.neuro_sdk = None
+            return {"ok": False, "msg": str(exc)}
+
+    def stop_neuro_sdk(self) -> dict[str, Any]:
+        if self.neuro_sdk is None:
+            return {"ok": True}
+        try:
+            self.neuro_sdk.stop()
+        except Exception:
+            pass
+        self.neuro_sdk = None
+        return {"ok": True}
+
+    def get_neuro_sdk_status(self) -> dict[str, Any]:
+        if self.neuro_sdk is None:
+            opts = self._neuro_settings_store()
+            from .neuro_sdk import DEFAULT_PORT
+            host = os.getenv("NOVA_NEURO_HOST") or os.getenv("NOVA_BIND_HOST") or "0.0.0.0"
+            port = int(opts.get("port", DEFAULT_PORT))
+            shown = host if host not in {"0.0.0.0", "::", ""} else "localhost"
+            return {
+                "running": False,
+                "port": port,
+                "connect_url": f"ws://{shown}:{port}",
+                "env_var": "NEURO_SDK_WS_URL",
+                "games": [],
+                "connections": 0,
+            }
+        return self.neuro_sdk.status()
+
+    def get_neuro_sdk_settings(self) -> dict[str, Any]:
+        return self._neuro_settings_store()
+
+    def save_neuro_sdk_settings(self, values: dict[str, Any]) -> dict[str, Any]:
+        if (err := self._not_ready()):
+            return err
+        store = self._neuro_settings_store()
+        for key, default in self._NEURO_SDK_DEFAULTS.items():
+            if key not in (values or {}):
+                continue
+            raw = values[key]
+            if isinstance(default, bool):
+                store[key] = bool(raw) if isinstance(raw, bool) else str(raw).lower() in {"1", "true", "yes", "on"}
+            elif isinstance(default, int):
+                try:
+                    store[key] = int(float(raw))
+                except (TypeError, ValueError):
+                    store[key] = default
+            else:
+                store[key] = str(raw)
+        from . import database
+        try:
+            database.set_state("neuro_sdk", json.dumps(store))
+        except Exception:
+            pass
+        # A running server keeps its current port until restarted (note it).
+        restart = self.neuro_sdk is not None and self.neuro_sdk.is_running()
+        msg = "Neuro SDK settings saved." + (" Restart the server to apply the port." if restart and "port" in (values or {}) else "")
+        return {"ok": True, "msg": msg, "settings": store}
+
+    # ── watch & react (look at the screen and comment) ───────────────────────────
+
+    _WATCH_DEFAULTS = {"interval_seconds": 20, "speak": True, "to_twitch": True}
+
+    def _watch_settings(self) -> dict[str, Any]:
+        from . import database
+        try:
+            saved = json.loads(database.get_state("watch_react", "{}") or "{}")
+        except Exception:
+            saved = {}
+        return {**self._WATCH_DEFAULTS, **(saved if isinstance(saved, dict) else {})}
+
+    def _save_watch_settings(self, store: dict[str, Any]) -> None:
+        from . import database
+        try:
+            database.set_state("watch_react", json.dumps(store))
+        except Exception:
+            pass
+
+    def get_watch_react_status(self) -> dict[str, Any]:
+        from . import vision
+        return {
+            "running": self._watch_enabled,
+            "vision_ready": vision.vision_available(self.config) if self.config else False,
+            **self._watch_settings(),
+        }
+
+    def start_watch_react(self) -> dict[str, Any]:
+        if (err := self._not_ready()):
+            return err
+        from . import vision
+        if not vision.vision_available(self.config):
+            return {"ok": False, "msg": (
+                "No vision model configured. Set a Vision model in Settings → AI Provider "
+                "(e.g. an Ollama model like 'llava' / 'qwen2.5vl' / 'moondream')."
+            )}
+        if self._watch_enabled:
+            return {"ok": True, "msg": "Already watching."}
+        self._watch_enabled = True
+        self._watch_thread = threading.Thread(target=self._watch_loop, daemon=True, name="NovaAIWatchReact")
+        self._watch_thread.start()
+        self._push_chat("System", "👁️ Watch & React on — I'll glance at the screen and react.", "system")
+        return {"ok": True, "msg": "Watching the screen."}
+
+    def stop_watch_react(self) -> dict[str, Any]:
+        self._watch_enabled = False
+        self._push_chat("System", "Watch & React off.", "system")
+        return {"ok": True}
+
+    def save_watch_react_settings(self, values: dict[str, Any]) -> dict[str, Any]:
+        store = self._watch_settings()
+        if "interval_seconds" in (values or {}):
+            try:
+                store["interval_seconds"] = max(5, int(float(values["interval_seconds"])))
+            except (TypeError, ValueError):
+                pass
+        for key in ("speak", "to_twitch"):
+            if key in (values or {}):
+                raw = values[key]
+                store[key] = bool(raw) if isinstance(raw, bool) else str(raw).lower() in {"1", "true", "yes", "on"}
+        self._save_watch_settings(store)
+        return {"ok": True, "msg": "Saved.", "settings": store}
+
+    def _watch_loop(self) -> None:
+        from . import vision
+        from .games import screen
+
+        while self._watch_enabled:
+            s = self._watch_settings()
+            interval = max(5, int(s.get("interval_seconds", 20)))
+            waited = 0.0
+            while self._watch_enabled and waited < interval:
+                time.sleep(0.5)
+                waited += 0.5
+            if not self._watch_enabled:
+                break
+            if self.busy:
+                continue  # don't talk over a chat/stream/game turn
+            try:
+                png = screen.capture_png()
+                if not png:
+                    continue
+                desc = vision.describe_image(
+                    self.config, png,
+                    "Briefly describe what's on screen right now: the game/app/video, what's "
+                    "happening, and anything notable. One or two sentences.",
+                )
+                if not desc:
+                    continue
+                if not self._acquire():
+                    continue
+                try:
+                    framing = (
+                        "You're watching this on your own livestream right now. React in ONE "
+                        "short, in-character sentence to what's on screen — give your take, don't "
+                        "just narrate. Don't say you can't see."
+                    )
+                    result = generate_reply(
+                        GenerationRequest(
+                            user_text=f"[What's on screen now]: {desc}",
+                            profile=self.profile,
+                            config=self.config,
+                            source="chat",
+                            extra_system=[framing],
+                        )
+                    )
+                    reply = result.reply
+                    companion = self.profile.get("companion_name", "NovaAI")
+                    self._push_chat(companion, reply, "assistant")
+                    if self.avatar is not None:
+                        try:
+                            self.avatar.publish_state({"emotion": result.emotion, "danger": False})
+                        except Exception:
+                            pass
+                    if self.twitch and self.twitch.authenticated and s.get("to_twitch", True):
+                        try:
+                            self.twitch.send_message(reply)
+                        except Exception:
+                            pass
+                    if self.state.voice_enabled and s.get("speak", True):
+                        self._speak(reply, result.emotion)
+                finally:
+                    self._release()
+            except Exception:
+                pass
 
     # ── singing ─────────────────────────────────────────────────────────────────
 

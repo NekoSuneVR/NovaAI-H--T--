@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NovaAI Chat Game Overlay</title>
+  <style>
+    /* Transparent so it drops straight into OBS as a Browser Source. */
+    html, body {
+      margin: 0; padding: 0; background: transparent;
+      font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden;
+      color: #fff; -webkit-font-smoothing: antialiased;
+    }
+    #root { display: flex; justify-content: center; padding: 18px; }
+    .panel {
+      display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 18px 22px 22px; border-radius: 22px; min-width: 360px;
+      background: linear-gradient(160deg, rgba(20,30,72,0.96), rgba(12,18,46,0.96));
+      box-shadow: 0 18px 60px rgba(0,0,0,0.45); backdrop-filter: blur(3px);
+    }
+    .hidden { display: none !important; }
+    .title { font-size: 30px; font-weight: 800; letter-spacing: 0.5px; text-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+    .legend { display: flex; gap: 18px; font-size: 14px; font-weight: 600; opacity: 0.95; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 13px; height: 13px; border-radius: 50%; box-shadow: 0 0 6px rgba(0,0,0,0.4); }
+    .status { font-size: 19px; font-weight: 800; margin-top: 2px; }
+    .timer { font-size: 16px; font-weight: 700; color: #9ec1ff; min-height: 20px; }
+    .timer.low { color: #ff6b6b; }
+
+    /* ── Connect 4 ── */
+    .c4-votes, .c4-board { display: grid; gap: 8px; }
+    .c4-votes { margin-top: 6px; }
+    .c4-vote { text-align: center; font-size: 15px; font-weight: 800; line-height: 1.1; color: #8fd3ff; }
+    .c4-vote .col { display: block; font-size: 18px; color: #cfe0ff; }
+    .c4-vote.win { color: #6bff95; }
+    .c4-board {
+      padding: 12px; border-radius: 16px;
+      background: linear-gradient(180deg, #2a52c7, #1c3aa0);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.35);
+    }
+    .c4-cell {
+      width: 46px; height: 46px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #0e1840, #0a1230);
+      box-shadow: inset 0 3px 6px rgba(0,0,0,0.6);
+      transition: background 0.25s ease;
+    }
+    .c4-cell.ai   { background: radial-gradient(circle at 35% 30%, #ff7a93, #e23153); }
+    .c4-cell.chat { background: radial-gradient(circle at 35% 30%, #ffe27a, #f1c40f); }
+    .c4-cell.win  { animation: glow 0.9s ease-in-out infinite alternate; }
+    @keyframes glow { from { box-shadow: 0 0 4px #fff; } to { box-shadow: 0 0 16px #fff, 0 0 26px #fff; } }
+    .drop { animation: drop 0.35s cubic-bezier(.3,1.4,.6,1); }
+    @keyframes drop { from { transform: translateY(-160px); } to { transform: translateY(0); } }
+
+    /* ── Minesweeper ── */
+    .ms-wrap { display: inline-grid; gap: 3px; }
+    .ms-row { display: grid; grid-auto-flow: column; gap: 3px; align-items: center; }
+    .ms-head, .ms-rownum { font-size: 12px; font-weight: 700; color: #9ec1ff; width: 34px; height: 18px; text-align: center; }
+    .ms-rownum { width: 18px; height: 34px; line-height: 34px; }
+    .ms-cell {
+      width: 34px; height: 34px; border-radius: 6px; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 17px; font-weight: 800;
+    }
+    .ms-hidden { background: linear-gradient(160deg, #4a6bd6, #34509f); box-shadow: inset 0 -3px 0 rgba(0,0,0,0.25); cursor: pointer; }
+    .ms-open   { background: #14204a; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05); }
+    .ms-mine   { background: radial-gradient(circle at 50% 45%, #ff5a72, #b81d38); }
+    .ms-mine_hidden { background: #1c2c5c; opacity: 0.6; }
+    .ms-cell .badge {
+      position: absolute; top: -5px; right: -5px; background: #f1c40f; color: #1a1a1a;
+      font-size: 11px; font-weight: 800; border-radius: 9px; padding: 0 5px; min-width: 14px;
+      text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    }
+    .ms-cell.last { outline: 2px solid #fff; }
+    .n1{color:#7fb2ff} .n2{color:#6bff95} .n3{color:#ff8a8a} .n4{color:#c99bff}
+    .n5{color:#ffb86b} .n6{color:#5ce0d0} .n7{color:#e6e6e6} .n8{color:#bdbdbd}
+    .idle { font-size: 16px; opacity: 0.85; padding: 30px 10px; text-align: center; }
+
+    /* ── Tic-Tac-Toe ── */
+    .ttt { display: grid; grid-template-columns: repeat(3, 76px); gap: 6px; margin-top: 6px; }
+    .ttt-cell {
+      width: 76px; height: 76px; border-radius: 12px; position: relative;
+      background: linear-gradient(160deg, #22315f, #182447);
+      display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 900;
+    }
+    .ttt-cell.ai { color: #ff6b86; } .ttt-cell.chat { color: #ffd84d; }
+    .ttt-cell.win { box-shadow: 0 0 14px #fff, inset 0 0 0 2px #fff; }
+    .ttt-cell .badge { position: absolute; top: 3px; left: 6px; font-size: 12px; color: #8fd3ff; font-weight: 800; }
+
+    /* ── Reversi ── */
+    .rv-wrap { display: inline-grid; gap: 3px; margin-top: 4px; }
+    .rv-row { display: grid; grid-auto-flow: column; gap: 3px; align-items: center; }
+    .rv-head { font-size: 11px; font-weight: 700; color: #9ec1ff; width: 32px; text-align: center; }
+    .rv-rownum { font-size: 11px; font-weight: 700; color: #9ec1ff; width: 16px; text-align: center; }
+    .rv-cell { width: 32px; height: 32px; border-radius: 5px; background: #1c7a3e; position: relative;
+      display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); }
+    .rv-disc { width: 24px; height: 24px; border-radius: 50%; }
+    .rv-disc.ai { background: radial-gradient(circle at 35% 30%, #ff7a93, #e23153); }
+    .rv-disc.chat { background: radial-gradient(circle at 35% 30%, #ffe27a, #f1c40f); }
+    .rv-legal { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.5); }
+    .rv-cell .badge { position: absolute; top: -4px; right: -4px; background: #f1c40f; color: #1a1a1a;
+      font-size: 10px; font-weight: 800; border-radius: 8px; padding: 0 4px; min-width: 12px; text-align: center; z-index: 2; }
+
+    /* ── Battleship ── */
+    .bs-boards { display: flex; gap: 18px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+    .bs-board-title { font-size: 12px; font-weight: 800; color: #cfe0ff; text-align: center; margin-bottom: 3px; }
+    .bs-wrap { display: inline-grid; gap: 2px; }
+    .bs-row { display: grid; grid-auto-flow: column; gap: 2px; align-items: center; }
+    .bs-head { font-size: 9px; font-weight: 700; color: #9ec1ff; width: 22px; text-align: center; }
+    .bs-rownum { font-size: 9px; font-weight: 700; color: #9ec1ff; width: 12px; text-align: center; }
+    .bs-cell { width: 22px; height: 22px; border-radius: 4px; position: relative; display: flex;
+      align-items: center; justify-content: center; font-size: 12px; }
+    .bs-sea { background: linear-gradient(160deg, #1f3f8a, #16306b); }
+    .bs-miss { background: #16306b; } .bs-miss::after { content: '•'; color: #7fa6e6; }
+    .bs-hit { background: radial-gradient(circle at 50% 45%, #ff6b6b, #c0392b); }
+    .bs-sunk { background: #7a1320; } .bs-ship { background: #4a5a7a; }
+    .bs-cell .badge { position: absolute; top: -4px; right: -4px; background: #f1c40f; color: #1a1a1a;
+      font-size: 9px; font-weight: 800; border-radius: 8px; padding: 0 3px; min-width: 11px; text-align: center; }
+    .bs-legend { font-size: 12px; color: #cfe0ff; margin-top: 4px; }
+
+    /* ── Nim ── */
+    .nim-heap { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .nim-label { font-size: 14px; font-weight: 800; color: #9ec1ff; width: 64px; }
+    .nim-obj { width: 16px; height: 28px; border-radius: 4px; background: linear-gradient(180deg, #8fd3ff, #4a90d9);
+      box-shadow: 0 2px 5px rgba(0,0,0,0.4); }
+    .nim-votes { font-size: 12px; color: #8fd3ff; margin-top: 8px; }
+
+    /* ── Rock Paper Scissors ── */
+    .rps-score { display: flex; gap: 26px; align-items: center; justify-content: center; margin: 10px 0; }
+    .rps-side { text-align: center; }
+    .rps-num { font-size: 44px; font-weight: 900; line-height: 1; }
+    .rps-num.ai { color: #ff6b86; } .rps-num.chat { color: #ffd84d; }
+    .rps-name { font-size: 13px; font-weight: 700; opacity: 0.9; }
+    .rps-vs { font-size: 20px; font-weight: 800; opacity: 0.7; }
+    .rps-last { font-size: 20px; font-weight: 800; text-align: center; margin-top: 6px; }
+    .rps-throw { font-size: 40px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="panel" id="panel">
+      <div class="title" id="title">NovaAI Games</div>
+      <div class="legend">
+        <span><span class="dot" style="background:#e23153"></span><span id="ai-name">NovaAI</span></span>
+        <span><span class="dot" style="background:#f1c40f"></span>Chat</span>
+      </div>
+      <div class="status" id="status">Waiting for a game…</div>
+      <div class="timer" id="timer"></div>
+      <div id="board"></div>
+    </div>
+  </div>
+
+  <script>
+    // ?ai=Nova overrides the displayed AI name; otherwise it comes from state.
+    const params = new URLSearchParams(location.search);
+    let STATE = null;
+    let deadline = 0;
+
+    function call(method, args) {
+      return fetch('/api/call', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method, args: args || [] }),
+      }).then(r => r.json()).then(j => (j ? j.result : null)).catch(() => null);
+    }
+
+    function topVote(votes) {
+      let max = 0; for (const k in votes) max = Math.max(max, votes[k]); return max;
+    }
+
+    // ── Connect 4 ──────────────────────────────────────────────────────────
+    function renderConnect4(s) {
+      const b = s.board || {}, cols = b.cols || 7, rows = b.rows || 6;
+      const grid = b.grid || [];
+      const votes = s.votes || {};
+      const max = topVote(votes);
+      const colTmpl = `repeat(${cols}, 46px)`;
+      let html = `<div class="c4-votes" style="grid-template-columns:${colTmpl}">`;
+      for (let c = 0; c < cols; c++) {
+        const v = votes[String(c + 1)] || 0;
+        const win = (v > 0 && v === max) ? ' win' : '';
+        html += `<div class="c4-vote${win}"><span>${v || ''}</span><span class="col">${c + 1}</span></div>`;
+      }
+      html += `</div><div class="c4-board" style="grid-template-columns:${colTmpl}">`;
+      const winSet = new Set((b.win_cells || []).map(p => p[0] + ',' + p[1]));
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const v = (grid[r] && grid[r][c]) || '';
+          const win = winSet.has(r + ',' + c) ? ' win' : '';
+          html += `<div class="c4-cell ${v}${win}"></div>`;
+        }
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    // ── Minesweeper ────────────────────────────────────────────────────────
+    function renderMinesweeper(s) {
+      const b = s.board || {}, cols = b.cols || 8, rows = b.rows || 8;
+      const grid = b.grid || [], votes = s.votes || {};
+      const colLabels = b.col_labels || [], rowLabels = b.row_labels || [];
+      const last = b.last_cell;
+      let html = `<div class="ms-wrap">`;
+      // header row of column letters
+      html += `<div class="ms-row"><div class="ms-rownum"></div>`;
+      for (let c = 0; c < cols; c++) html += `<div class="ms-head">${colLabels[c] || ''}</div>`;
+      html += `</div>`;
+      for (let r = 0; r < rows; r++) {
+        html += `<div class="ms-row"><div class="ms-rownum">${rowLabels[r] || (r + 1)}</div>`;
+        for (let c = 0; c < cols; c++) {
+          const cell = (grid[r] && grid[r][c]) || { s: 'hidden' };
+          const tok = (colLabels[c] || '').toLowerCase() + (r + 1);
+          const lastCls = (last && last === tok) ? ' last' : '';
+          if (cell.s === 'hidden') {
+            const v = votes[tok] || 0;
+            const badge = v ? `<span class="badge">${v}</span>` : '';
+            html += `<div class="ms-cell ms-hidden${lastCls}">${badge}</div>`;
+          } else if (cell.s === 'open') {
+            const n = cell.n || 0;
+            html += `<div class="ms-cell ms-open${lastCls} ${n ? 'n' + n : ''}">${n || ''}</div>`;
+          } else if (cell.s === 'mine') {
+            html += `<div class="ms-cell ms-mine${lastCls}">💣</div>`;
+          } else {
+            html += `<div class="ms-cell ms-mine_hidden">💣</div>`;
+          }
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    // ── Tic-Tac-Toe ────────────────────────────────────────────────────────
+    function renderGrid3(s) {
+      const b = s.board || {}, grid = b.grid || [], votes = s.votes || {};
+      const winSet = new Set((b.win_cells || []).map(p => p[0] + ',' + p[1]));
+      let html = '<div class="ttt">';
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+        const v = (grid[r] && grid[r][c]) || '';
+        const num = r * 3 + c + 1;
+        const win = winSet.has(r + ',' + c) ? ' win' : '';
+        const mark = v === 'ai' ? 'O' : v === 'chat' ? 'X' : '';
+        const vc = votes[String(num)] || 0;
+        const badge = (!v && vc) ? `<span class="badge">${vc}</span>` : '';
+        const ghost = (!v && !vc) ? `<span style="opacity:.16;font-size:18px">${num}</span>` : '';
+        html += `<div class="ttt-cell ${v}${win}">${badge}${mark}${ghost}</div>`;
+      }
+      return html + '</div>';
+    }
+
+    // ── Reversi ────────────────────────────────────────────────────────────
+    function renderReversi(s) {
+      const b = s.board || {}, grid = b.grid || [], votes = s.votes || {};
+      const cols = b.col_labels || [], rows = b.row_labels || [];
+      const legal = new Set(b.legal || []);
+      const aiName = (s.players && s.players.ai ? s.players.ai.name : 'NovaAI');
+      const sc = b.score || {};
+      let html = `<div class="legend" style="margin-top:4px"><span><span class="dot" style="background:#f1c40f"></span>Chat ${sc.chat || 0}</span><span><span class="dot" style="background:#e23153"></span>${escapeHtml(aiName)} ${sc.ai || 0}</span></div>`;
+      html += '<div class="rv-wrap"><div class="rv-row"><div class="rv-rownum"></div>';
+      for (let c = 0; c < cols.length; c++) html += `<div class="rv-head">${cols[c]}</div>`;
+      html += '</div>';
+      for (let r = 0; r < grid.length; r++) {
+        html += `<div class="rv-row"><div class="rv-rownum">${rows[r] || (r + 1)}</div>`;
+        for (let c = 0; c < grid[r].length; c++) {
+          const v = grid[r][c] || '';
+          const tok = (cols[c] || '').toLowerCase() + (r + 1);
+          const vc = votes[tok] || 0;
+          const badge = vc ? `<span class="badge">${vc}</span>` : '';
+          const inner = v ? `<div class="rv-disc ${v}"></div>` : (legal.has(tok) ? '<div class="rv-legal"></div>' : '');
+          html += `<div class="rv-cell">${badge}${inner}</div>`;
+        }
+        html += '</div>';
+      }
+      return html + '</div>';
+    }
+
+    // ── Nim ────────────────────────────────────────────────────────────────
+    function renderNim(s) {
+      const b = s.board || {}, heaps = b.heaps || [], votes = s.votes || {};
+      let html = '<div style="margin-top:8px">';
+      heaps.forEach((n, i) => {
+        let objs = '';
+        for (let k = 0; k < n; k++) objs += '<div class="nim-obj"></div>';
+        html += `<div class="nim-heap"><div class="nim-label">Heap ${i + 1}</div>${objs || '<span style="opacity:.5">empty</span>'}</div>`;
+      });
+      html += '</div>';
+      const ve = Object.entries(votes);
+      if (ve.length) html += '<div class="nim-votes">Votes: ' + ve.map(([k, v]) => { const p = k.split('-'); return `${p[1]}×h${p[0]}=${v}`; }).join('   ') + '</div>';
+      return html;
+    }
+
+    // ── Rock Paper Scissors ────────────────────────────────────────────────
+    function renderRps(s) {
+      const b = s.board || {}, votes = s.votes || {};
+      const emoji = { r: '✊', p: '✋', s: '✌️' };
+      const aiName = (s.players && s.players.ai ? s.players.ai.name : 'NovaAI');
+      const sc = b.score || {};
+      let html = `<div class="rps-score"><div class="rps-side"><div class="rps-num chat">${sc.chat || 0}</div><div class="rps-name">Chat</div></div>`;
+      html += `<div class="rps-vs">vs</div>`;
+      html += `<div class="rps-side"><div class="rps-num ai">${sc.ai || 0}</div><div class="rps-name">${escapeHtml(aiName)}</div></div></div>`;
+      html += `<div style="text-align:center;font-size:13px;opacity:.8">First to ${b.target || 3} · Round ${b.round || 1}</div>`;
+      if (b.last) {
+        const r = b.last;
+        const res = r.result === 'chat' ? 'Chat won the round!' : r.result === 'ai' ? aiName + ' won the round!' : 'Draw';
+        html += `<div class="rps-last"><span class="rps-throw">${emoji[r.chat] || ''}</span> <span style="font-size:14px;opacity:.75">${escapeHtml(res)}</span> <span class="rps-throw">${emoji[r.ai] || ''}</span></div>`;
+      }
+      if (Object.keys(votes).length) {
+        html += '<div style="text-align:center;font-size:14px;color:#8fd3ff;margin-top:8px">' + ['r', 'p', 's'].map(k => `${emoji[k]} ${votes[k] || 0}`).join('     ') + '</div>';
+      }
+      return html;
+    }
+
+    // ── Battleship ─────────────────────────────────────────────────────────
+    function bsGrid(grid, cols, rows, votes) {
+      let html = '<div class="bs-wrap"><div class="bs-row"><div class="bs-rownum"></div>';
+      for (let c = 0; c < cols.length; c++) html += `<div class="bs-head">${cols[c]}</div>`;
+      html += '</div>';
+      for (let r = 0; r < grid.length; r++) {
+        html += `<div class="bs-row"><div class="bs-rownum">${rows[r] || (r + 1)}</div>`;
+        for (let c = 0; c < grid[r].length; c++) {
+          const st = (grid[r][c] || {}).s || 'sea';
+          const tok = votes ? ((cols[c] || '').toLowerCase() + (r + 1)) : null;
+          const vc = (votes && votes[tok]) || 0;
+          const badge = vc ? `<span class="badge">${vc}</span>` : '';
+          const sym = st === 'hit' ? '💥' : st === 'sunk' ? '🔥' : st === 'ship' ? '🚢' : '';
+          html += `<div class="bs-cell bs-${st}">${badge}${sym}</div>`;
+        }
+        html += '</div>';
+      }
+      return html + '</div>';
+    }
+    function renderBattleship(s) {
+      const b = s.board || {}, cols = b.col_labels || [], rows = b.row_labels || [], votes = s.votes || {};
+      const aiName = (s.players && s.players.ai ? s.players.ai.name : 'NovaAI');
+      const left = `<div><div class="bs-board-title">🎯 ${escapeHtml(aiName)}'s waters — you fire</div>${bsGrid(b.nova_grid || [], cols, rows, votes)}</div>`;
+      const right = `<div><div class="bs-board-title">🛡️ Chat's waters — ${escapeHtml(aiName)} fires</div>${bsGrid(b.chat_grid || [], cols, rows, null)}</div>`;
+      const sl = b.ships_left || {};
+      return `<div class="bs-boards">${left}${right}</div><div class="bs-legend">Ships afloat — ${escapeHtml(aiName)}: ${sl.ai ?? '?'} · Chat: ${sl.chat ?? '?'}</div>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    }
+
+    function render() {
+      const panel = document.getElementById('panel');
+      const s = STATE;
+      if (!s || !s.active) {
+        document.getElementById('title').textContent = 'NovaAI Games';
+        document.getElementById('status').textContent = '';
+        document.getElementById('timer').textContent = '';
+        document.getElementById('board').innerHTML =
+          '<div class="idle">No game running.<br>Start one from the Games tab.</div>';
+        return;
+      }
+      const aiName = params.get('ai') || (s.players && s.players.ai && s.players.ai.name) || 'NovaAI';
+      document.getElementById('ai-name').textContent = aiName;
+      document.getElementById('title').textContent = s.title || 'NovaAI Games';
+      document.getElementById('status').textContent = s.status_text || '';
+      const board = document.getElementById('board');
+      const renderers = {
+        connect4: renderConnect4, minesweeper: renderMinesweeper, tictactoe: renderGrid3,
+        reversi: renderReversi, nim: renderNim, rps: renderRps, battleship: renderBattleship,
+      };
+      const fn = renderers[s.key];
+      board.innerHTML = fn ? fn(s) : '';
+      tickTimer();
+    }
+
+    function tickTimer() {
+      const t = document.getElementById('timer');
+      const s = STATE;
+      if (!s || !s.active) { t.textContent = ''; return; }
+      if (s.phase === 'voting' && deadline > 0) {
+        const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        t.textContent = left + 's';
+        t.classList.toggle('low', left <= 5);
+      } else if (s.phase === 'thinking') {
+        t.textContent = (s.players && s.players.ai ? s.players.ai.name : 'NovaAI') + ' is thinking…';
+        t.classList.remove('low');
+      } else {
+        t.textContent = '';
+        t.classList.remove('low');
+      }
+    }
+
+    async function refresh() {
+      const s = await call('get_chat_game', []);
+      if (s) {
+        STATE = s;
+        deadline = s.deadline_ms || 0;
+        render();
+      }
+    }
+
+    // Live push from the app on every move/vote, plus a steady poll fallback.
+    try {
+      const es = new EventSource('/events');
+      es.onmessage = (ev) => {
+        const data = String(ev.data || '');
+        if (data.includes('__onChatGame')) {
+          try {
+            const json = JSON.parse(data);
+            const m = json.match(/__onChatGame\((.*)\)$/s);
+            if (m) { STATE = JSON.parse(m[1]); deadline = STATE.deadline_ms || 0; render(); return; }
+          } catch (e) {}
+          refresh();
+        }
+      };
+    } catch (e) {}
+
+    refresh();
+    setInterval(refresh, 3000);     // safety poll
+    setInterval(tickTimer, 250);    // smooth countdown
+  </script>
+</body>
+</html>

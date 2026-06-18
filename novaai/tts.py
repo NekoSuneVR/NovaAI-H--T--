@@ -963,6 +963,30 @@ def speak_text(
 ) -> Path:
     cleaned_text = trim_text_for_tts(text, config.xtts_max_text_chars)
 
+    # Per-language voicing: speak each reply in its own detected language so a
+    # Japanese/Russian/etc. line isn't read with English phonetics. Temporarily
+    # overrides config.tts_language for this synthesis only.
+    _restore_lang = None
+    if getattr(config, "tts_auto_language", False):
+        from .lang_detect import detect_language
+
+        lang = detect_language(cleaned_text, config.tts_language)
+        if lang and lang != config.tts_language:
+            _restore_lang = config.tts_language
+            config.tts_language = lang
+    try:
+        return _speak_text_inner(cleaned_text, config, state, on_amplitude)
+    finally:
+        if _restore_lang is not None:
+            config.tts_language = _restore_lang
+
+
+def _speak_text_inner(
+    cleaned_text: str,
+    config: Config,
+    state: SessionState,
+    on_amplitude: Any = None,
+) -> Path:
     if config.tts_provider == "gtts":
         output_path = AUDIO_DIR / "latest_reply.mp3"
         return synthesize_gtts_to_file(cleaned_text, config, output_path)

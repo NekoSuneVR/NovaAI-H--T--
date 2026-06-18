@@ -184,6 +184,9 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         if path in {"/overlay/earnings", "/earnings"}:
             self._serve_file(STATIC_DIR / "earnings.html")
             return
+        if path in {"/overlay/game", "/overlay/chatgame", "/chatgame"}:
+            self._serve_file(STATIC_DIR / "chatgame.html")
+            return
         # Avatar bridge media (TTS/singing audio, MMD dance assets) -> 8766.
         if path in _AVATAR_GET_EXACT or path.startswith(_AVATAR_GET_PREFIXES):
             webproxy.proxy_http(self, self.avatar_http, self.path)

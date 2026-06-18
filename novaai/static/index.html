@@ -143,6 +143,7 @@ tailwind.config = {
       <button onclick="showPage('avatar')"      data-page="avatar"      class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#129302;</span> Avatar</button>
       <button onclick="showPage('mmd')"         data-page="mmd"         class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128131;</span> MMD</button>
       <button onclick="showPage('game')"        data-page="game"        class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#127918;</span> Game</button>
+      <button onclick="showPage('games')"       data-page="games"       class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#9824;</span> Chat Games</button>
       <button onclick="showPage('reminders')"   data-page="reminders"   class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128276;</span> Reminders</button>
       <button onclick="showPage('calendar')"    data-page="calendar"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128197;</span> Calendar</button>
       <button onclick="showPage('shopping')"    data-page="shopping"    class="nav-item w-full text-left px-5 py-2.5 text-[13px] text-nova-muted2 border-l-[3px] border-transparent flex items-center gap-2.5"><span class="w-5 text-center opacity-70">&#128722;</span> Shopping</button>
@@ -256,6 +257,8 @@ tailwind.config = {
           <button id="chat-send-btn" onclick="doSend()" class="btn-primary px-5 py-2 rounded-lg text-[13px] font-semibold">Send</button>
           <button id="chat-stop-btn" onclick="doStop()" class="hidden bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-[13px] font-semibold" title="Stop generation (Esc)">Stop</button>
           <button id="chat-listen-btn" onclick="doListenFromChat()" class="btn-secondary px-4 py-2 rounded-lg text-[13px] font-semibold" title="Voice input (F8)">Mic</button>
+          <button id="chat-image-btn" onclick="$('chat-image-file').click()" class="btn-secondary px-4 py-2 rounded-lg text-[13px] font-semibold" title="Show NovaAI an image to react to">🖼️</button>
+          <input id="chat-image-file" type="file" accept="image/*" class="hidden" onchange="doReviewImage(this)" />
         </div>
       </div>
 
@@ -472,6 +475,112 @@ tailwind.config = {
         <div class="card p-5">
           <div class="text-[13px] font-bold mb-3">Live State</div>
           <div id="game-state" class="text-[12px] text-nova-muted space-y-1"><span>Not running.</span></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- PAGE: Chat Games (Twitch chat vs NovaAI) -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <div id="page-games" class="page flex-col h-full overflow-y-auto p-6 gap-5">
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[13px] font-bold">Chat vs NovaAI</div>
+            <span id="cg-badge" class="text-[11px] font-semibold text-nova-muted">Stopped</span>
+          </div>
+          <div class="text-[12px] text-nova-muted mb-3">Twitch chat votes a move each turn; NovaAI answers with a real game engine and trash-talks in voice/chat. Connect the Stream (Twitch) first so chat can vote. Mods can also start games in chat with <code>!game connect4</code> / <code>!game minesweeper</code> / <code>!game stop</code>.</div>
+          <div id="cg-picker" class="grid grid-cols-2 gap-2 mb-3"></div>
+          <div class="flex gap-2">
+            <button id="cg-stop-btn" onclick="doStopChatGame()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Stop Game</button>
+          </div>
+        </div>
+
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">OBS Browser Source</div>
+          <div class="text-[12px] text-nova-muted mb-2">Add this URL as a Browser Source in OBS (transparent background). It shows the live board, vote tally, and countdown.</div>
+          <div class="flex gap-2 items-center">
+            <input id="cg-obs-url" type="text" readonly class="flex-1 text-[12px]" value="" />
+            <button onclick="doCopyOverlayUrl()" class="btn-secondary px-3 py-2 rounded-lg text-[12px] font-semibold">Copy</button>
+            <button onclick="doOpenOverlay()" class="btn-secondary px-3 py-2 rounded-lg text-[12px] font-semibold">Open</button>
+          </div>
+        </div>
+
+        <div class="card p-5">
+          <div class="text-[13px] font-bold mb-3">Settings</div>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-3">
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Vote window (seconds)</span><input id="cg-vote-seconds" type="number" min="5" class="w-full" /></label>
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>NovaAI think delay (seconds)</span><input id="cg-ai-delay" type="number" min="0" step="0.5" class="w-full" /></label>
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Who moves first</span><select id="cg-starter" class="w-full"><option value="chat">Chat</option><option value="ai">NovaAI</option></select></label>
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Rematch wait (seconds)</span><input id="cg-restart-seconds" type="number" min="0" class="w-full" /></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="cg-commentary" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>NovaAI commentary (voice + chat trash talk)</span></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="cg-auto-restart" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Auto-rematch when a game ends</span></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="cg-allow-chat-start" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Let mods start/stop games from chat</span></label>
+          </div>
+          <div class="flex gap-2 mt-3">
+            <button onclick="doSaveChatGameSettings()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Save Settings</button>
+            <span id="cg-settings-saved" class="text-[11px] text-emerald-400 self-center"></span>
+          </div>
+        </div>
+
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-[13px] font-bold">Live Preview</div>
+            <span id="cg-status" class="text-[11px] text-nova-muted"></span>
+          </div>
+          <div class="text-[12px] text-nova-muted mb-2">Test without Twitch: cast a vote as the streamer.</div>
+          <div class="flex gap-2 mb-3">
+            <input id="cg-vote-input" type="text" placeholder="e.g. 4  (Connect 4)  or  c4  (Minesweeper)" class="flex-1 text-[12px]" onkeydown="if(event.key==='Enter')doChatVote()" />
+            <button onclick="doChatVote()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Vote</button>
+          </div>
+          <iframe id="cg-preview" class="w-full rounded-lg border border-white/10" style="height:520px;background:#0c1230" src="about:blank"></iframe>
+        </div>
+
+        <!-- Neuro Game SDK: NovaAI plays real external games -->
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[13px] font-bold">Play Real Games — Neuro Game SDK</div>
+            <span id="ns-badge" class="text-[11px] font-semibold text-nova-muted">Stopped</span>
+          </div>
+          <div class="text-[12px] text-nova-muted mb-3">Start this server and NovaAI can play any game built with the <a href="https://github.com/VedalAI/neuro-game-sdk" target="_blank" class="text-violet-300 underline">Neuro Game SDK</a> — it perceives the game and chooses the moves, narrating in voice/chat. Works with the community integrations: <b>Among Us, Liar's Bar, Buckshot Roulette, Inscryption, Hollow Knight, Cyberpunk, Pokémon Platinum, Who Wants to Be a Millionaire</b>, and more.</div>
+          <div class="text-[12px] text-nova-muted mb-3">In the game (or its launcher), set the env var <code>NEURO_SDK_WS_URL</code> to the URL below, then launch the game — it connects automatically.</div>
+          <div class="flex gap-2 items-center mb-3">
+            <input id="ns-url" type="text" readonly class="flex-1 text-[12px]" value="" />
+            <button onclick="doCopyNeuroUrl()" class="btn-secondary px-3 py-2 rounded-lg text-[12px] font-semibold">Copy</button>
+          </div>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-3 mb-3">
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Server port</span><input id="ns-port" type="number" min="1" class="w-full" /></label>
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Retries on rejected move</span><input id="ns-retries" type="number" min="0" class="w-full" /></label>
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Proactive check (seconds)</span><input id="ns-proactive-seconds" type="number" min="3" class="w-full" /></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="ns-speak-context" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>React aloud to game events</span></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="ns-commentary" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Speak a line when making a move</span></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text col-span-2"><input id="ns-proactive" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Proactive play (act on her own between prompts — for action games like Hollow Knight)</span></label>
+          </div>
+          <div class="flex gap-2 mb-3">
+            <button id="ns-start-btn" onclick="doStartNeuroSdk()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Start Server</button>
+            <button id="ns-stop-btn" onclick="doStopNeuroSdk()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Stop</button>
+            <button onclick="doSaveNeuroSdk()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Save Settings</button>
+            <span id="ns-saved" class="text-[11px] text-emerald-400 self-center"></span>
+          </div>
+          <div id="ns-status" class="text-[12px] text-nova-muted space-y-1"><span>Server stopped.</span></div>
+        </div>
+
+        <!-- Watch & React: NovaAI glances at the screen and reacts -->
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[13px] font-bold">👁️ Watch &amp; React (screen)</div>
+            <span id="wr-badge" class="text-[11px] font-semibold text-nova-muted">Off</span>
+          </div>
+          <div class="text-[12px] text-nova-muted mb-3">NovaAI periodically looks at your screen (game, video, anything) and reacts in-character — like reacting live on stream. Needs a Vision model (Settings → AI Provider). Reactions post to chat, voice (if on), and Twitch (if connected).</div>
+          <div class="flex gap-2 items-end mb-3">
+            <label class="flex flex-col gap-1 text-[11px] text-nova-muted"><span>Glance every (seconds)</span><input id="wr-interval" type="number" min="5" class="w-36" /></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text"><input id="wr-twitch" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Post to Twitch</span></label>
+            <label class="flex items-center gap-2 text-[12px] text-nova-text"><input id="wr-speak" type="checkbox" class="w-4 h-4 rounded accent-violet-500" /> <span>Speak</span></label>
+          </div>
+          <div class="flex gap-2">
+            <button id="wr-start-btn" onclick="doStartWatch()" class="btn-primary px-4 py-2 rounded-lg text-[12px] font-semibold">Start Watching</button>
+            <button id="wr-stop-btn" onclick="doStopWatch()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Stop</button>
+            <button onclick="doSaveWatch()" class="btn-secondary px-4 py-2 rounded-lg text-[12px] font-semibold">Save</button>
+            <span id="wr-saved" class="text-[11px] text-emerald-400 self-center"></span>
+          </div>
         </div>
       </div>
 
@@ -789,6 +898,7 @@ const PAGE_META = {
   avatar:    ['Avatar',    'VRM avatar and lip-sync'],
   mmd:       ['MMD',       'Upload & play MMD dances'],
   game:      ['Game',      'Autonomous game playing'],
+  games:     ['Chat Games', 'Twitch chat plays against NovaAI'],
   reminders: ['Reminders', 'Reminders and alarms'],
   calendar:  ['Calendar',  'Upcoming events'],
   shopping:  ['Shopping',  'Shopping list'],
@@ -815,6 +925,7 @@ function showPage(key) {
   if (key === 'avatar')     loadAvatar();
   if (key === 'mmd')        loadMmd();
   if (key === 'game')       loadGame();
+  if (key === 'games')      loadChatGames();
   if (key === 'reminders')  loadReminders();
   if (key === 'calendar')   loadCalendar();
   if (key === 'shopping')   loadShopping();
@@ -1477,6 +1588,241 @@ async function doSetGameGoal() {
   try { const r = await api().set_game_goal($('game-goal').value || ''); if (r && !r.ok && r.msg) showNotification(r.msg); } catch(e) { console.error(e); }
 }
 
+// ── Chat Games (Twitch chat vs NovaAI) ──────────────────────────────────────
+
+let _chatGameList = [];
+
+function overlayUrl() {
+  return (location.protocol === 'http:' || location.protocol === 'https:')
+    ? location.origin + '/overlay/game' : '';
+}
+
+async function loadChatGames() {
+  try {
+    _chatGameList = await api().list_chat_games() || [];
+  } catch(e) { _chatGameList = []; console.error(e); }
+  let status = { active: false };
+  try { status = await api().get_chat_game() || { active: false }; } catch(e) { console.error(e); }
+  _renderChatGamePicker(status);
+  _applyChatGameStatus(status);
+  // OBS URL + preview (only works in --web mode; file:// GUI has no web server).
+  const url = overlayUrl();
+  const urlInput = $('cg-obs-url');
+  if (urlInput) urlInput.value = url || 'Run NovaAI with --web to use the overlay (python app.py --web)';
+  const frame = $('cg-preview');
+  if (frame && url && frame.src !== url) frame.src = url;
+  try {
+    const s = await api().get_chat_game_settings() || {};
+    if ($('cg-vote-seconds'))    $('cg-vote-seconds').value = s.vote_seconds ?? 15;
+    if ($('cg-ai-delay'))        $('cg-ai-delay').value = s.ai_delay ?? 2.5;
+    if ($('cg-restart-seconds')) $('cg-restart-seconds').value = s.restart_seconds ?? 7;
+    if ($('cg-starter'))         $('cg-starter').value = s.starter || 'chat';
+    if ($('cg-commentary'))      $('cg-commentary').checked = s.commentary !== false;
+    if ($('cg-auto-restart'))    $('cg-auto-restart').checked = s.auto_restart !== false;
+    if ($('cg-allow-chat-start'))$('cg-allow-chat-start').checked = s.allow_chat_start !== false;
+  } catch(e) { console.error(e); }
+  loadNeuroSdk();
+  loadWatchReact();
+}
+
+function _renderChatGamePicker(status) {
+  const wrap = $('cg-picker');
+  if (!wrap) return;
+  const runningKey = status && status.active ? status.key : null;
+  wrap.innerHTML = '';
+  _chatGameList.forEach(g => {
+    const on = g.key === runningKey;
+    const btn = document.createElement('button');
+    btn.className = (on ? 'btn-primary' : 'btn-secondary') + ' px-4 py-3 rounded-lg text-left';
+    btn.onclick = () => doStartChatGame(g.key);
+    btn.innerHTML = `<div class="text-[13px] font-semibold">${escHtml(g.label)}${on ? ' · LIVE' : ''}</div><div class="text-[11px] text-nova-muted mt-0.5">${escHtml(g.desc)}</div>`;
+    wrap.appendChild(btn);
+  });
+}
+
+function _applyChatGameStatus(status) {
+  const badge = $('cg-badge');
+  if (badge) {
+    const live = status && status.active;
+    badge.textContent = live ? 'Running' : 'Stopped';
+    badge.className = 'text-[11px] font-semibold ' + (live ? 'text-emerald-400' : 'text-nova-muted');
+  }
+  const st = $('cg-status');
+  if (st) {
+    if (status && status.active) {
+      const votes = status.votes || {};
+      const voteStr = Object.keys(votes).length
+        ? ' · votes: ' + Object.entries(votes).map(([k, v]) => `${k}=${v}`).join(' ') : '';
+      st.textContent = `${status.status_text || ''}${voteStr}`;
+    } else {
+      st.textContent = '';
+    }
+  }
+}
+
+async function doStartChatGame(key) {
+  try {
+    const r = await api().start_chat_game(key);
+    if (r && !r.ok && r.msg) showNotification(r.msg);
+    loadChatGames();
+  } catch(e) { console.error(e); }
+}
+async function doStopChatGame() {
+  try { await api().stop_chat_game(); loadChatGames(); } catch(e) { console.error(e); }
+}
+async function doChatVote() {
+  const inp = $('cg-vote-input');
+  const move = (inp.value || '').trim();
+  if (!move) return;
+  try {
+    const r = await api().chat_game_vote(move, 'streamer');
+    if (r && !r.ok && r.msg) showNotification(r.msg);
+    inp.value = '';
+  } catch(e) { console.error(e); }
+}
+async function doSaveChatGameSettings() {
+  const values = {
+    vote_seconds: parseInt($('cg-vote-seconds').value || '15', 10),
+    ai_delay: parseFloat($('cg-ai-delay').value || '2.5'),
+    restart_seconds: parseInt($('cg-restart-seconds').value || '7', 10),
+    starter: $('cg-starter').value || 'chat',
+    commentary: $('cg-commentary').checked,
+    auto_restart: $('cg-auto-restart').checked,
+    allow_chat_start: $('cg-allow-chat-start').checked,
+  };
+  try {
+    await api().save_chat_game_settings(values);
+    const s = $('cg-settings-saved');
+    if (s) { s.textContent = 'Saved'; setTimeout(() => { s.textContent = ''; }, 2000); }
+  } catch(e) { console.error(e); }
+}
+function doCopyOverlayUrl() {
+  const url = overlayUrl();
+  if (!url) { showNotification('Overlay needs --web mode.'); return; }
+  try { navigator.clipboard.writeText(url); showNotification('Overlay URL copied.'); } catch(e) {}
+}
+function doOpenOverlay() {
+  const url = overlayUrl();
+  if (url) window.open(url, '_blank');
+  else showNotification('Overlay needs --web mode.');
+}
+
+window.__onChatGame = function(state) {
+  // Keep the Chat Games page badge/status in sync (the iframe self-renders).
+  if (currentPage === 'games') _applyChatGameStatus(state);
+};
+
+// ── Neuro Game SDK (NovaAI plays real external games) ───────────────────────
+
+async function loadNeuroSdk() {
+  let st = { running: false };
+  try { st = await api().get_neuro_sdk_status() || { running: false }; } catch(e) { console.error(e); }
+  _applyNeuroStatus(st);
+  try {
+    const s = await api().get_neuro_sdk_settings() || {};
+    if ($('ns-port'))          $('ns-port').value = s.port ?? 8000;
+    if ($('ns-retries'))       $('ns-retries').value = s.max_retries ?? 2;
+    if ($('ns-proactive-seconds')) $('ns-proactive-seconds').value = s.proactive_seconds ?? 8;
+    if ($('ns-speak-context')) $('ns-speak-context').checked = s.speak_context !== false;
+    if ($('ns-commentary'))    $('ns-commentary').checked = s.commentary !== false;
+    if ($('ns-proactive'))     $('ns-proactive').checked = s.proactive === true;
+  } catch(e) { console.error(e); }
+}
+
+function _applyNeuroStatus(st) {
+  const badge = $('ns-badge');
+  if (badge) {
+    badge.textContent = st.running ? 'Running' : 'Stopped';
+    badge.className = 'text-[11px] font-semibold ' + (st.running ? 'text-emerald-400' : 'text-nova-muted');
+  }
+  if ($('ns-url')) $('ns-url').value = st.connect_url || '';
+  const box = $('ns-status');
+  if (!box) return;
+  if (!st.running) { box.innerHTML = '<span>Server stopped.</span>'; return; }
+  const games = st.games || [];
+  let html = `<div>🟢 Listening at <span class="text-nova-text">${escHtml(st.connect_url || '')}</span> · ${st.connections || 0} connected</div>`;
+  if (!games.length) {
+    html += '<div class="text-nova-muted">Waiting for a game to connect… set NEURO_SDK_WS_URL and launch it.</div>';
+  } else {
+    games.forEach(g => {
+      html += `<div>🎮 <span class="text-nova-text">${escHtml(g.game)}</span> — ${(g.actions||[]).length} actions</div>`;
+    });
+  }
+  if (st.last_action) {
+    html += `<div>🕹️ Last move: <span class="text-nova-text">${escHtml(st.last_action.name || '')}</span></div>`;
+  }
+  if (st.last_context) {
+    html += `<div class="text-nova-muted">💬 ${escHtml(String(st.last_context).slice(0, 120))}</div>`;
+  }
+  box.innerHTML = html;
+}
+
+async function doStartNeuroSdk() {
+  try { const r = await api().start_neuro_sdk(); if (r && !r.ok && r.msg) showNotification(r.msg); loadNeuroSdk(); }
+  catch(e) { console.error(e); }
+}
+async function doStopNeuroSdk() {
+  try { await api().stop_neuro_sdk(); loadNeuroSdk(); } catch(e) { console.error(e); }
+}
+async function doSaveNeuroSdk() {
+  const values = {
+    port: parseInt($('ns-port').value || '8000', 10),
+    max_retries: parseInt($('ns-retries').value || '2', 10),
+    proactive_seconds: parseInt($('ns-proactive-seconds').value || '8', 10),
+    speak_context: $('ns-speak-context').checked,
+    commentary: $('ns-commentary').checked,
+    proactive: $('ns-proactive').checked,
+  };
+  try {
+    const r = await api().save_neuro_sdk_settings(values);
+    const s = $('ns-saved');
+    if (s) { s.textContent = (r && r.msg) ? r.msg : 'Saved'; setTimeout(() => { s.textContent = ''; }, 3000); }
+  } catch(e) { console.error(e); }
+}
+function doCopyNeuroUrl() {
+  const url = $('ns-url') ? $('ns-url').value : '';
+  if (url) { try { navigator.clipboard.writeText(url); showNotification('Connect URL copied.'); } catch(e) {} }
+}
+
+window.__onNeuroSdk = function(state) {
+  if (currentPage === 'games') _applyNeuroStatus(state);
+};
+
+// ── Watch & React (NovaAI looks at the screen and reacts) ───────────────────
+
+async function loadWatchReact() {
+  try {
+    const s = await api().get_watch_react_status() || {};
+    const badge = $('wr-badge');
+    if (badge) {
+      badge.textContent = s.running ? 'Watching' : 'Off';
+      badge.className = 'text-[11px] font-semibold ' + (s.running ? 'text-emerald-400' : 'text-nova-muted');
+    }
+    if ($('wr-interval')) $('wr-interval').value = s.interval_seconds ?? 20;
+    if ($('wr-twitch'))   $('wr-twitch').checked = s.to_twitch !== false;
+    if ($('wr-speak'))    $('wr-speak').checked = s.speak !== false;
+  } catch(e) { console.error(e); }
+}
+async function doStartWatch() {
+  try { const r = await api().start_watch_react(); if (r && !r.ok && r.msg) showNotification(r.msg); loadWatchReact(); }
+  catch(e) { console.error(e); }
+}
+async function doStopWatch() {
+  try { await api().stop_watch_react(); loadWatchReact(); } catch(e) { console.error(e); }
+}
+async function doSaveWatch() {
+  const values = {
+    interval_seconds: parseInt($('wr-interval').value || '20', 10),
+    to_twitch: $('wr-twitch').checked,
+    speak: $('wr-speak').checked,
+  };
+  try {
+    await api().save_watch_react_settings(values);
+    const s = $('wr-saved');
+    if (s) { s.textContent = 'Saved'; setTimeout(() => { s.textContent = ''; }, 2000); }
+  } catch(e) { console.error(e); }
+}
+
 // ── Chat ─────────────────────────────────────────────────────────────────
 
 function _buildBubble(author, text, role) {
@@ -1515,6 +1861,27 @@ async function doSend() {
 
 async function doStop() {
   try { await api().stop_generation(); } catch(e) { console.error(e); }
+}
+
+async function doReviewImage(input) {
+  const file = input.files && input.files[0];
+  input.value = '';  // allow re-picking the same file
+  if (!file) return;
+  if (file.size > 12 * 1024 * 1024) { showNotification('Image too large (max 12 MB).'); return; }
+  const note = (prompt('Ask NovaAI something about this image (optional):') || '').trim();
+  const btn = $('chat-image-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
+    const r = await api().review_image(dataUrl, note);
+    if (r && !r.ok && r.msg) showNotification(r.msg);
+  } catch(e) { console.error(e); showNotification('Could not review the image.'); }
+  finally { if (btn) btn.disabled = false; }
 }
 
 

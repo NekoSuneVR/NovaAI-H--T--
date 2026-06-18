@@ -319,6 +319,7 @@ class Config:
     tts_provider: str
     audio_output: str
     tts_language: str
+    tts_auto_language: bool
     xtts_model_name: str
     xtts_speaker: str
     xtts_speaker_wav: str | None
@@ -416,6 +417,8 @@ class Config:
     factorio_rcon_password: str | None
     vrchat_osc_host: str
     vrchat_osc_port: int
+    vrchat_osc_read_port: int
+    vrchat_log_dir: str | None
     game_universal_name: str
 
     @classmethod
@@ -611,6 +614,7 @@ class Config:
             tts_language=os.getenv("XTTS_LANGUAGE")
             or os.getenv("TTS_LANG")
             or os.getenv("STT_LANGUAGE", "en"),
+            tts_auto_language=parse_bool_env("TTS_AUTO_LANGUAGE", False),
             xtts_model_name=os.getenv(
                 "XTTS_MODEL_NAME",
                 "tts_models/multilingual/multi-dataset/xtts_v2",
@@ -759,5 +763,7 @@ class Config:
             factorio_rcon_password=parse_optional_str_env("FACTORIO_RCON_PASSWORD"),
             vrchat_osc_host=os.getenv("VRCHAT_OSC_HOST", "127.0.0.1").strip() or "127.0.0.1",
             vrchat_osc_port=int(os.getenv("VRCHAT_OSC_PORT", "9000")),
+            vrchat_osc_read_port=int(os.getenv("VRCHAT_OSC_READ_PORT", "9001")),
+            vrchat_log_dir=parse_optional_str_env("VRCHAT_LOG_DIR"),
             game_universal_name=os.getenv("GAME_UNIVERSAL_NAME", "a PC game").strip() or "a PC game",
         )
