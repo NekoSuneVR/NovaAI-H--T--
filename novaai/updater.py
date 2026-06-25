@@ -22,7 +22,13 @@ DEFAULT_GITHUB_REPO = "cachenetworks/NovaAI"
 DEFAULT_GITHUB_BRANCH = "main"
 DEFAULT_UPDATE_CACHE_SECONDS = 21600
 DEFAULT_AUTO_UPDATE_CHECK = True
-DEFAULT_AUTO_UPDATE_INSTALL = True
+# Security: do NOT silently download and execute remote code on startup. Auto-
+# install pulls a zip from the configured GitHub repo, overwrites local files and
+# reruns setup.py with no confirmation — so whoever controls that upstream repo
+# would get code execution on every launch. Default OFF: the app only *notifies*
+# that an update exists. Opt in explicitly with AUTO_UPDATE_INSTALL=1 (and only
+# when you trust the upstream repo) or run `python setup.py --update` by hand.
+DEFAULT_AUTO_UPDATE_INSTALL = False
 GITHUB_REQUEST_HEADERS = {"User-Agent": "NovaAI-Updater"}
 
 UPDATE_EXCLUDED_TOP_LEVEL = {
@@ -394,8 +400,30 @@ def download_update_archive(repo_slug: str, branch: str, destination: Path) -> N
                 zip_file.write(chunk)
 
 
+def _is_within(base: Path, target: Path) -> bool:
+    """True if ``target`` resolves to a path inside ``base`` (zip-slip guard)."""
+    try:
+        target.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def extract_archive_root(zip_path: Path, extract_dir: Path) -> Path:
+    extract_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as archive:
+        # Validate every member resolves *inside* extract_dir before writing a
+        # single byte. zipfile.extractall() follows ``../`` and absolute member
+        # names, so a malicious archive could otherwise overwrite files anywhere
+        # on disk (zip-slip / CVE-2007-4559 class). Reject the whole archive on
+        # the first escaping entry rather than extracting a partial tree.
+        for member in archive.namelist():
+            destination = extract_dir / member
+            if not _is_within(extract_dir, destination):
+                raise RuntimeError(
+                    f"Refusing unsafe update archive: entry '{member}' escapes "
+                    "the extraction directory."
+                )
         archive.extractall(extract_dir)
 
     children = [child for child in extract_dir.iterdir() if child.is_dir()]

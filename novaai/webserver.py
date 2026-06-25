@@ -21,6 +21,7 @@ Run it with:  ``python app.py --web``  (host/port via NOVA_WEB_HOST / NOVA_WEB_P
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import queue
@@ -62,11 +63,32 @@ _BLOCKED_METHODS = {"start_reminder_checker"}
 _BRIDGE_SHIM = """
 <script>
 (function () {
+  // ---- optional access token: open the dashboard as  http://host:port/?token=SECRET
+  // (matching NOVA_WEB_TOKEN). The token is kept in memory and sent on every API
+  // call / event stream; it is stripped from the visible URL so it isn't shoulder-
+  // surfed or saved verbatim in history. When NOVA_WEB_TOKEN is unset the server
+  // does not enforce it and everything works token-free as before.
+  var NOVA_TOKEN = '';
+  try {
+    var u = new URL(window.location.href);
+    NOVA_TOKEN = u.searchParams.get('token')
+      || ((u.hash.match(/token=([^&]+)/) || [])[1] || '');
+    if (NOVA_TOKEN) {
+      try { window.sessionStorage.setItem('novaToken', NOVA_TOKEN); } catch (e) {}
+      u.searchParams.delete('token');
+      window.history.replaceState(null, '', u.pathname + (u.search || ''));
+    } else {
+      try { NOVA_TOKEN = window.sessionStorage.getItem('novaToken') || ''; } catch (e) {}
+    }
+  } catch (e) {}
+
   // ---- client -> server: window.pywebview.api.<method>(...args) -> POST /api/call
   function call(method, args) {
+    var headers = { 'Content-Type': 'application/json' };
+    if (NOVA_TOKEN) { headers['X-Nova-Token'] = NOVA_TOKEN; }
     return fetch('/api/call', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify({ method: method, args: Array.prototype.slice.call(args) })
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (j && j.error) { throw new Error(j.error); }
@@ -84,7 +106,9 @@ _BRIDGE_SHIM = """
 
   // ---- server -> client: SSE stream of JS snippets pushed via Api._js(code)
   function connectEvents() {
-    var es = new EventSource('/events');
+    // EventSource can't set headers, so the token rides as a query param.
+    var url = '/events' + (NOVA_TOKEN ? '?token=' + encodeURIComponent(NOVA_TOKEN) : '');
+    var es = new EventSource(url);
     es.onmessage = function (e) {
       try { (0, eval)(JSON.parse(e.data)); }
       catch (err) { console.error('NovaAI event eval failed:', err); }
@@ -152,9 +176,25 @@ class NovaWebHandler(BaseHTTPRequestHandler):
     clients: _SseClients
     avatar_http: tuple[str, int]
     avatar_ws: tuple[str, int]
+    token: str = ""  # NOVA_WEB_TOKEN; "" disables enforcement (legacy behavior)
 
     def log_message(self, format: str, *args: object) -> None:  # quieter logs
         return
+
+    def _token_ok(self) -> bool:
+        """Validate the access token when one is configured.
+
+        Returns True when no token is set (enforcement disabled) or when the
+        request carries the matching token via the ``X-Nova-Token`` header or a
+        ``?token=`` query parameter. Uses a constant-time comparison so the token
+        can't be recovered by timing the response.
+        """
+        if not self.token:
+            return True
+        provided = self.headers.get("X-Nova-Token", "")
+        if not provided:
+            provided = parse_qs(urlsplit(self.path).query).get("token", [""])[0]
+        return bool(provided) and hmac.compare_digest(provided, self.token)
 
     # ── GET ──────────────────────────────────────────────────────────────────
     def do_GET(self) -> None:
@@ -170,6 +210,9 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self._serve_index()
             return
         if path == "/events":
+            if not self._token_ok():
+                self.send_error(HTTPStatus.UNAUTHORIZED, "Missing or invalid token")
+                return
             self._serve_events()
             return
         if path in {"/avatar", "/avatar/"}:
@@ -273,7 +316,13 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         if secret:
             provided = self.headers.get("X-Nova-Secret", "")
             qs = parse_qs(urlsplit(self.path).query)
-            if provided != secret and (qs.get("secret", [""])[0] != secret):
+            qs_secret = qs.get("secret", [""])[0]
+            # Constant-time compare so the shared secret can't be brute-forced by
+            # timing; accept it from either the header or the query string.
+            if not (
+                hmac.compare_digest(provided, secret)
+                or hmac.compare_digest(qs_secret, secret)
+            ):
                 self._send_json({"error": "Forbidden"}, HTTPStatus.FORBIDDEN)
                 return
         try:
@@ -317,6 +366,12 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         # hitting the public avatar overlay origin can't swap the model.
         if raw_path != "/api/call":
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+
+        # The control API can invoke any public Api method (restart, settings,
+        # uploads…). When a token is configured, reject calls that don't carry it.
+        if not self._token_ok():
+            self._send_json({"error": "Unauthorized"}, HTTPStatus.UNAUTHORIZED)
             return
 
         try:
@@ -424,11 +479,14 @@ def serve(host: str | None = None, port: int | None = None) -> None:
 
     api = webgui.Api()
 
+    token = os.getenv("NOVA_WEB_TOKEN", "").strip()
+
     handler_attrs = {
         "api": api,
         "clients": clients,
         "avatar_http": ("127.0.0.1", avatar_http_port),
         "avatar_ws": ("127.0.0.1", avatar_ws_port),
+        "token": token,
     }
     handler_cls = type("NovaWebHandlerBound", (NovaWebHandler,), handler_attrs)
 
@@ -462,6 +520,16 @@ def serve(host: str | None = None, port: int | None = None) -> None:
     print(f"    avatar overlay   http://{overlay_host}:{overlay_shown}/avatar")
     print(f"    avatar socket    ws://{overlay_host}:{overlay_shown}/avatar-ws")
     print(f"    earnings overlay http://{overlay_host}:{overlay_shown}/overlay/earnings")
+    if token:
+        print("  Access control: ENABLED — open the dashboard with "
+              f"?token=… (set via NOVA_WEB_TOKEN).")
+    elif host in {"0.0.0.0", "::"}:
+        print("  WARNING: the control API is reachable on all network interfaces "
+              "with NO authentication.")
+        print("           Anyone who can reach this port can control NovaAI. Set "
+              "NOVA_WEB_TOKEN to require a token,")
+        print("           or bind to 127.0.0.1 (NOVA_WEB_HOST) if you only need "
+              "local access.")
     print("Press Ctrl+C to stop.")
     try:
         httpd.serve_forever()
